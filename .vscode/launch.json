@@ -1,0 +1,31 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Python: Current File",
+        "type": "python",
+        "request": "launch",
+        "program": "${file}",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        },
+        "justMyCode": true
+      }
+    ]
+}  
+{
+    "name": "Streamlit: app.py",
+    "type": "python",
+    "request": "launch",
+    "module": "streamlit",
+    "args": ["run", "streamlit/app.py"],
+    "console": "integratedTerminal",
+    "cwd": "${workspaceFolder}",
+    "env": {
+      "PYTHONPATH": "${workspaceFolder}"
+    },
+    "justMyCode": true
+}
+  
