@@ -58,8 +58,7 @@ def _to_str(x: Any, default: str = "") -> str:
 DEST = Literal["MDT1", "TLA1", "TNY1"]
 def df_to_chewy_sku_states(
     df_sku_data: pd.DataFrame,
-    df_splits: Optional[pd.DataFrame] = None,
-) -> List[ChewySkuState]:
+    df_splits: Optional[pd.DataFrame] = None,) -> List[ChewySkuState]:
     """
     Convert a SKU-level dataframe (already in the target schema) into List[ChewySkuState].
 
@@ -149,47 +148,30 @@ def df_to_chewy_sku_states(
     return out
 
 
-# def df_to_vendor_states(df_vendor: pd.DataFrame) -> List[vendorState]:
-#     """
-#     Expect a dataframe with columns:
-#       - vendor_Code
-#       - CBM_Max (optional; falls back to default in vendorState)
-#     """
-#     dfx = df_vendor.copy()
-#     dfx.columns = [c.strip() for c in dfx.columns]
-#     if "vendor_Code" not in dfx.columns:
-#         # Try common aliases
-#         for alt in ["CHW_PRIMARY_SUPPLIER_NUMBER", "vendor_number", "VENDOR_NUMBER"]:
-#             if alt in dfx.columns:
-#                 dfx = dfx.rename(columns={alt: "vendor_Code"})
-#                 break
-#     out: List[vendorState] = []
-#     for _, r in dfx.iterrows():
-#         out.append(
-#             vendorState(  # default CBM_Max=66.0 if missing per model :contentReference[oaicite:7]{index=7}
-#                 vendor_Code=str(r.get("vendor_Code")),
-#                 CBM_Max=safe_float(r.get("CBM_Max")),
-#             )
-#         )
-#     return out
+def df_to_vendor_states(df_sku_data: pd.DataFrame, df_vendor_cbm: pd.DataFrame, chewySkuStates: List[ChewySkuState]) -> List[vendorState]:
+    out: List[vendorState] = []
+
+    unique_vendors = df_sku_data[["vendor_Code", "vendor_name"]].drop_duplicates()
+    for _, r in unique_vendors.iterrows():
+        vs = vendorState(
+            vendor_Code=str(r.get("vendor_Code")),
+            vendor_name=_to_str(r.get("vendor_name")),
+            CBM_Max = _to_float(
+                df_vendor_cbm.loc[df_vendor_cbm["vendor_number"] == str(r.get("vendor_Code")), "CBM Max"].values[0]
+            ) if not df_vendor_cbm.loc[df_vendor_cbm["vendor_number"] == str(r.get("vendor_Code")), "CBM Max"].empty else 66.0,
+
+            Demand_skus=[sku for sku in chewySkuStates if sku.vendor_Code == str(r.get("vendor_Code"))],
+        )
+        out.append(vs)
+
+    return out
 
 
-# def init_container_plans(
-#     vendors: Iterable[vendorState],
-#     dests: Iterable[DEST] = ("MDT1", "TLA1", "TNY1"),
-#     start_container_id: int = 1,) -> List[containerPlanState]:
-#     """
-#     Create empty container plans per (vendor, DEST) with one empty container seeded
-#     at vendor.CBM_Max capacity (default 66 CBM) per containerState model. :contentReference[oaicite:8]{index=8}
-#     """
-#     plans: List[containerPlanState] = []
-#     cid = start_container_id
-#     for v in vendors:
-#         for d in dests:
-#             cap = float(v.CBM_Max) if v.CBM_Max is not None else 66.0
-#             c = containerState(container_id=cid, vendor_Code=v.vendor_Code, DEST=d, cbm_used=0.0, cbm_capacity=cap)  # :contentReference[oaicite:9]{index=9}
-#             plan = containerPlanState(vendor_Code=v.vendor_Code, DEST=d, containers=[c], assignments=[])  # :contentReference[oaicite:10]{index=10}
-#             plans.append(plan)
-#             cid += 1
-#     return plans
-
+    for _, r in df_vendor.iterrows():
+        vs = vendorState(
+            vendor_Code=str(r.get("vendor_Code")),
+            vendor_name=_to_str(r.get("vendor_name")),
+            CBM_Max=_to_float(r.get("CBM_Max")),
+        )
+        out.append(vs)
+    return out
