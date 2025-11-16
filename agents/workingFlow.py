@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import data.sql_lite_store as sql_lite_store
+import data.snowflake_pull as snowflake_pull
+
 
 def process_and_locate_missing_records(df_demand, df_Keppler_Split_Perc, df_vendor_cbm):
 
@@ -371,10 +373,23 @@ def build_cbm_capacity_map(
     return out
 
 
+def process_SKU_Supply_Snapshot(conn, df_demand):
+    df_skuSupplySnapshot = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_SKU_Supply_Snapshot)
+    return df_skuSupplySnapshot
+
 def process_DQ_workflow():
     df_demand = sql_lite_store.load_table("demand_data")
     df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
     df_vendor_cbm = sql_lite_store.load_table("Vendor_CBM")
+
+    config = snowflake_pull.get_snowflake_config()
+    conn = snowflake_pull.setconnection(config)
+
+    df_skuSupplySnapshot = process_SKU_Supply_Snapshot(conn, df_demand, df_vendor_cbm)
+
+
+
+
 
     intermediate_demand, DQ_skus_w_no_splits, DQ_skus_w_no_record_in_plm, DQ_excluded_skus_w_incomplete_data = process_and_locate_missing_records(df_demand, df_kepplerSplits, df_vendor_cbm)
     ok, count = sql_lite_store.save_table(intermediate_demand, "intermediate_demand")
@@ -458,8 +473,6 @@ if __name__ == "__main__":
     # df_vendor_cbm = sql_lite_store.load_table("Vendor_CBM")
     # df_CBM_Max = sql_lite_store.load_table("CBM_Max")
 
-    # df_demand_skinny, skus_w_no_splits, skus_w_no_record_in_plm, excluded_skus_w_incomplete_data = process_and_locate_missing_records(df_demand, df_kepplerSplits, df_vendor_cbm)
-    # df_cbm_capacity_map = build_cbm_capacity_map(df_demand_skinny, df_CBM_Max)
 
     # containerPlan = build_containers(df_demand_skinny, df_cbm_capacity_map, group_cols=('CHW_PRIMARY_SUPPLIER_NUMBER','DEST'), vendor_col='CHW_PRIMARY_SUPPLIER_NUMBER')
     # df_containerPlan= pd.DataFrame(containerPlan)
