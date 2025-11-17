@@ -81,17 +81,17 @@ def df_to_chewy_sku_states(
     # --- Build demand_by_dest fractions map keyed by CHW_SKU_NUMBER ---
     demand_fractions: Dict[str, Dict[str, float]] = {}
     if df_splits is not None and not df_splits.empty:
-        sp = df_splits.copy()
+        sp = df_splits.copy()        
+        sp = sp[sp["TOTAL_STAT_FCAST"] > 0]
+        sp["CHW_SKU_NUMBER"] = sp["CHW_SKU_NUMBER"].astype(str).str.strip()
         sp.columns = [c.upper().strip() for c in sp.columns]
-        if "ITEM_ID" in sp.columns:
-            sp["ITEM_ID"] = sp["ITEM_ID"].astype(str).str.strip()
-            frac_map = {"MDT1_FRAC": "MDT1", "TLA1_FRAC": "TLA1", "TNY1_FRAC": "TNY1"}
-            for _, rr in sp.iterrows():
-                sku = rr["ITEM_ID"]
-                demand_fractions[sku] = {
-                    dest: (float(rr.get(col)) if pd.notna(rr.get(col)) else 0.0)
-                    for col, dest in frac_map.items()
-                }
+        frac_map = {"MDT1_FRAC": "MDT1", "TLA1_FRAC": "TLA1", "TNY1_FRAC": "TNY1"}
+        for _, rr in sp.iterrows():
+            sku = rr["CHW_SKU_NUMBER"]
+            demand_fractions[sku] = {
+                dest: (float(rr.get(col)) if pd.notna(rr.get(col)) else 0.0)
+                for col, dest in frac_map.items()
+            }
 
     out: List[ChewySkuState] = []
 
@@ -102,9 +102,18 @@ def df_to_chewy_sku_states(
 
         # demand_by_dest if splits provided
         demand_by_dest = None
-        if sku_num and planned is not None and sku_num in demand_fractions:
-            fracs = demand_fractions[sku_num]
-            demand_by_dest = {d: planned * float(fr) for d, fr in fracs.items()}
+        if planned is not None and planned > 0:
+            if sku_num and sku_num in demand_fractions:
+                # Use provided splits
+                fracs = demand_fractions[sku_num]
+                demand_by_dest = {d: planned * float(fr) for d, fr in fracs.items()}
+            else:
+                # Default: 100% to TNY1
+                demand_by_dest = {
+                    "MDT1": 0.0,
+                    "TLA1": 0.0,
+                    "TNY1": planned
+                }
 
         cs = ChewySkuState(
             # product identity
