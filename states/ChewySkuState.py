@@ -1,11 +1,13 @@
 from __future__ import annotations
 from typing import Optional, Dict, List, Literal, Tuple
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, ConfigDict
 
 # ---------- Core entities ----------
 class ChewySkuState(BaseModel):
-    parent_product_part_number: str
+    model_config = ConfigDict(revalidate_instances='never')
+    
+    parent_product_part_number: Optional[str] = None
     product_part_number: str
     product_name: str
     vendor_Code: str
