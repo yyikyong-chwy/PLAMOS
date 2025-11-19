@@ -1,9 +1,11 @@
 # data/sqlite_store.py
-import sqlite3
+import sqlite3, decimal
 import pandas as pd
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+
+sqlite3.register_adapter(decimal.Decimal, float)
 
 load_dotenv()
 

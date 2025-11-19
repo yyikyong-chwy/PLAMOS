@@ -1,8 +1,10 @@
 from __future__ import annotations
 from typing import Optional, Dict, List, Literal, Tuple
 from datetime import datetime
-from pydantic import BaseModel, Field, validator, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict
 
+#technically this is not a state object, but it is used to store the data for the sku
+#intend to get rid off later...
 # ---------- Core entities ----------
 class ChewySkuState(BaseModel):
     model_config = ConfigDict(revalidate_instances='never')
@@ -39,5 +41,3 @@ class ChewySkuState(BaseModel):
     bufferDemand: Optional[float] = None
     excess_demand: Optional[float] = None
 
-    # Derived fields per destination (optional; can be filled by a split node)
-    demand_by_dest: Optional[Dict[Literal["MDT1","TLA1","TNY1"], float]] = None

@@ -4,27 +4,13 @@ from typing import Dict, List, Iterable, Optional, Literal
 import pandas as pd
 import numpy as np
 import math
+from pydantic import ValidationError
 from typing import Any
 
-# --- Your state models (robust imports for flat or package layouts) ---
-try:
-    from ChewySkuState import ChewySkuState  # :contentReference[oaicite:0]{index=0}
-except ImportError:
-    from states.ChewySkuState import ChewySkuState  # alt layout
-
-try:
-    from vendorState import vendorState  # :contentReference[oaicite:1]{index=1}
-except ImportError:
-    from states.vendorState import vendorState
-
-try:
-    from containerPlanState import containerPlanState  # :contentReference[oaicite:2]{index=2}
-    from containerState import containerState          # :contentReference[oaicite:3]{index=3}
-    from containerAssignmentState import containerAssignmentState  # :contentReference[oaicite:4]{index=4}
-except ImportError:
-    from states.containerPlanState import containerPlanState
-    from states.containerState import containerState
-    from states.containerAssignmentState import containerAssignmentState
+from states.ChewySkuState import ChewySkuState  # alt layout
+from states.ContainerRow import ContainerPlanRow
+from states.vendorState import vendorState
+from states.containerPlanState import ContainerPlanState
 
 
 
@@ -55,10 +41,9 @@ def _to_str(x: Any, default: str = "") -> str:
 # 1) DataFrame -> State(s)
 # -------------------------
 
-DEST = Literal["MDT1", "TLA1", "TNY1"]
+
 def df_to_chewy_sku_states(
-    df_sku_data: pd.DataFrame,
-    df_splits: Optional[pd.DataFrame] = None,
+    df_sku_data: pd.DataFrame
 ) -> List[ChewySkuState]:
     """
     Loader for current df_sku_data schema:
@@ -78,20 +63,6 @@ def df_to_chewy_sku_states(
     dfx = df_sku_data.copy()
     dfx.columns = [c.strip() for c in dfx.columns]
 
-    # --- Build demand_by_dest fractions map keyed by CHW_SKU_NUMBER ---
-    demand_fractions: Dict[str, Dict[str, float]] = {}
-    if df_splits is not None and not df_splits.empty:
-        sp = df_splits.copy()        
-        sp = sp[sp["TOTAL_STAT_FCAST"] > 0]
-        sp["CHW_SKU_NUMBER"] = sp["CHW_SKU_NUMBER"].astype(str).str.strip()
-        sp.columns = [c.upper().strip() for c in sp.columns]
-        frac_map = {"MDT1_FRAC": "MDT1", "TLA1_FRAC": "TLA1", "TNY1_FRAC": "TNY1"}
-        for _, rr in sp.iterrows():
-            sku = rr["CHW_SKU_NUMBER"]
-            demand_fractions[sku] = {
-                dest: (float(rr.get(col)) if pd.notna(rr.get(col)) else 0.0)
-                for col, dest in frac_map.items()
-            }
 
     out: List[ChewySkuState] = []
 
@@ -99,21 +70,6 @@ def df_to_chewy_sku_states(
         # keys / aliases from your df
         sku_num = _to_str(r.get("CHW_SKU_NUMBER"))
         planned = _to_float(r.get("Planned_Demand"))
-
-        # demand_by_dest if splits provided
-        demand_by_dest = None
-        if planned is not None and planned > 0:
-            if sku_num and sku_num in demand_fractions:
-                # Use provided splits
-                fracs = demand_fractions[sku_num]
-                demand_by_dest = {d: planned * float(fr) for d, fr in fracs.items()}
-            else:
-                # Default: 100% to TNY1
-                demand_by_dest = {
-                    "MDT1": 0.0,
-                    "TLA1": 0.0,
-                    "TNY1": planned
-                }
 
         cs = ChewySkuState(
             # product identity
@@ -160,15 +116,13 @@ def df_to_chewy_sku_states(
             bufferDemand=_to_float(r.get("bufferDemand")),
             excess_demand=_to_float(r.get("excess_demand")),
 
-            # per-destination demand (optional)
-            demand_by_dest=demand_by_dest,
         )
         out.append(cs)
 
     return out
 
 
-def df_to_vendor_states(df_sku_data: pd.DataFrame, df_CBM_Max: pd.DataFrame, chewySkuStates: List[ChewySkuState]) -> List[vendorState]:
+def df_to_vendor_states(df_sku_data: pd.DataFrame, df_CBM_Max: pd.DataFrame, chewySkuStates: List[ChewySkuState], containerPlanRows: List[ContainerPlanRow]) -> List[vendorState]:
     out: List[vendorState] = []
 
     unique_vendors = df_sku_data[["CHW_PRIMARY_SUPPLIER_NUMBER", "CHW_PRIMARY_SUPPLIER_NAME"]].drop_duplicates()
@@ -179,16 +133,92 @@ def df_to_vendor_states(df_sku_data: pd.DataFrame, df_CBM_Max: pd.DataFrame, che
         ) if not df_CBM_Max.loc[df_CBM_Max["vendor_number"] == vendor_code, "CBM Max"].empty else 66.0
         demand_skus = [sku for sku in chewySkuStates if sku.vendor_Code == vendor_code]
         
+        container_plan_state = ContainerPlanState.construct_state(vendor_Code=vendor_code, rows=containerPlanRows, vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")), plan_type="base")
+
         # Use model_construct to bypass validation and avoid class identity issues during module reloads
         vs = vendorState.model_construct(
             vendor_Code=vendor_code,
             vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")),
             CBM_Max=cbm_max,
-            Demand_skus=demand_skus,
+            ChewySku_info=demand_skus,
+            container_plans=[container_plan_state] #inserting a blank one for now, will add more later
         )
         out.append(vs)
 
     return out
 
 
+def load_container_plan_rows(demand_by_Dest: pd.DataFrame) -> List[ContainerPlanRow]:
+    """
+    Map demand_by_Dest -> List[ContainerPlanRow].
+    Required columns (must exist in the DataFrame):
+      CHW_PRIMARY_SUPPLIER_NUMBER, CHW_PRIMARY_SUPPLIER_NAME, DEST, CHW_SKU_NUMBER,
+      CHW_MASTER_CASE_PACK, CHW_MASTER_CARTON_CBM, baseDemandCasesNeed
+    Optionally reads: container, cases_assigned (if present).
+    """
+    required = [
+        "CHW_PRIMARY_SUPPLIER_NUMBER", "CHW_PRIMARY_SUPPLIER_NAME", "DEST",
+        "CHW_SKU_NUMBER", "CHW_MASTER_CASE_PACK", "CHW_MASTER_CARTON_CBM",
+        "Planned_Demand_cases_need"
+    ]
+    missing = [c for c in required if c not in demand_by_Dest.columns]
+    if missing:
+        raise KeyError(f"Missing required columns: {missing}")
 
+    def _to_int(x):
+        if x is None: return None
+        try:
+            if isinstance(x, float) and math.isnan(x): return None
+            return int(x)
+        except Exception:
+            return None
+
+    def _to_float(x):
+        if x is None: return None
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    rows: List[ContainerPlanRow] = []
+    for rec in demand_by_Dest.to_dict(orient="records"):
+        # Skip if any *critical* field is missing after coercion
+        vendor_code = rec.get("CHW_PRIMARY_SUPPLIER_NUMBER")
+        vendor_name = rec.get("CHW_PRIMARY_SUPPLIER_NAME")
+        dest = rec.get("DEST")
+        sku = rec.get("CHW_SKU_NUMBER")
+
+        mcp = _to_int(rec.get("CHW_MASTER_CASE_PACK"))
+        cbm = _to_float(rec.get("CHW_MASTER_CARTON_CBM"))
+        need_cases = _to_int(rec.get("Planned_Demand_cases_need"))
+
+        if not (vendor_code and vendor_name and dest and sku and mcp is not None and cbm is not None and need_cases is not None):
+            # Row is incomplete for the model; skip it
+            continue
+
+        cases_assigned = rec.get("cases_assigned", None)
+        cases_assigned = _to_int(cases_assigned) if cases_assigned is not None else None
+
+        cbm_assigned = None
+        if cases_assigned is not None and cbm is not None:
+            cbm_assigned = cases_assigned * cbm
+
+        try:
+            item = ContainerPlanRow(
+                vendor_Code=str(vendor_code),
+                vendor_name=str(vendor_name),
+                DEST=str(dest),
+                container=_to_int(rec.get("container")),   # will be None (not in df)
+                product_part_number=str(sku),
+                master_case_pack=int(mcp),
+                case_pk_CBM=float(cbm),
+                cases_needed=int(need_cases),
+                cases_assigned=cases_assigned,
+                cbm_assigned=cbm_assigned,
+            )
+            rows.append(item)
+        except ValidationError:
+            # If any row still fails validation, skip it
+            continue
+
+    return rows
