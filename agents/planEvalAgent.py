@@ -195,6 +195,63 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
          + weights.get("excess", 0.10) * excess_score)
     )
 
+    
+    #    Produces a list of {DEST, container, cbm_used}
+    if not df.empty:
+        cbm_cap = float(vendor.CBM_Max or 66.0)
+        used_by_cdest_df = (
+            df.groupby(["DEST", "container"], dropna=True)["cbm_assigned"]
+                .sum()
+                .reset_index()
+                .rename(columns={"cbm_assigned": "cbm_used"})
+        )
+        used_by_cdest_df["capacity_cbm"] = cbm_cap
+        # Unused = max(capacity - used, 0). If a container overflows, unused=0 (overflow can be inferred via cbm_used > capacity).
+        used_by_cdest_df["unused_cbm"] = (used_by_cdest_df["capacity_cbm"] - used_by_cdest_df["cbm_used"]).clip(lower=0.0)
+
+        total_cbm_used_by_container_dest = used_by_cdest_df.to_dict(orient="records")
+    else:
+        total_cbm_used_by_container_dest = [] #empty list if no df
+
+    #    Allocate each SKU's excess_cases across its assigned containers
+    #    proportional to cases_assigned per container, then convert to CBM.
+    total_excess_in_cbm_by_container: Dict[Any, float] = {}
+    if not df.empty and not target_df.empty:
+        # per-SKU totals
+        sku_total_cases = (
+            df.groupby("product_part_number")["cases_assigned"].sum().astype(float)
+        )
+        # Merge row-level with sku totals and each row's case_pk_CBM
+        rows = df[["product_part_number","container","cases_assigned","case_pk_CBM"]].copy()
+        rows["product_part_number"] = rows["product_part_number"].astype(str)
+        rows = rows.merge(
+            sku_total_cases.rename("sku_cases_total").reset_index().rename(columns={"index":"product_part_number"}),
+            on="product_part_number",
+            how="left"
+        )
+        # Bring in SKU excess cases (in CASES)
+        sku_excess_cases = target_df["excess_cases"].astype(float).fillna(0.0)
+        rows = rows.merge(
+            sku_excess_cases.rename("excess_cases").reset_index().rename(columns={"index":"product_part_number"}),
+            on="product_part_number",
+            how="left"
+        )
+        rows["sku_cases_total"] = rows["sku_cases_total"].fillna(0.0)
+        rows["excess_cases"] = rows["excess_cases"].fillna(0.0)
+
+        # Proportional allocation per row
+        def _row_excess_cases(r):
+            if r["sku_cases_total"] <= 0 or r["excess_cases"] <= 0:
+                return 0.0
+            share = r["cases_assigned"] / r["sku_cases_total"]
+            return float(share * r["excess_cases"])
+
+        rows["row_excess_cases"] = rows.apply(_row_excess_cases, axis=1)
+        rows["row_excess_cbm"] = rows["row_excess_cases"] * rows["case_pk_CBM"].astype(float)
+
+        by_container = rows.groupby("container")["row_excess_cbm"].sum().fillna(0.0)
+        total_excess_in_cbm_by_container = {k: float(v) for k, v in by_container.to_dict().items()}
+
     # Write metrics back to the plan
     latest_plan_metrics = ContainerPlanMetrics(
         containers=int(containers),
@@ -208,9 +265,10 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         ape_vs_base=float(ape_vs_base),
         ape_vs_excess=float(0),
         overall_score=float(overall),
+        total_cbm_used_by_container_dest=total_cbm_used_by_container_dest,
+        total_excess_in_cbm_by_container=total_excess_in_cbm_by_container,
     )
 
-    vendor.container_plans[-1].metrics = latest_plan_metrics
-
+    vendor.container_plans[-1].metrics = latest_plan_metrics    
     return vendor
 

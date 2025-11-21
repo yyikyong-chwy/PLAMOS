@@ -5,30 +5,7 @@ from pydantic import BaseModel, Field
 import pandas as pd
 
 from states.ContainerRow import ContainerPlanRow
-
-
-class ContainerPlanMetrics(BaseModel):
-    containers: int = 0
-    total_cbm_used: float = 0.0
-    total_cbm_capacity: float = 0.0
-    avg_utilization: float = 0.0
-    weighted_utilization: float = 0.0
-    demand_shortfall: float = 0.0
-    sku_splits_off_mcp: int = 0
-    moq_violations: int = 0
-    low_util_count: int = 0               # # of containers < 90% utilization
-    low_util_threshold: float = 0.90
-
-    # SKU-alignment errors (weighted MAPE-like, in [0, 1])
-    ape_vs_planned: float = 0.0
-    ape_vs_base: float = 0.0
-    ape_vs_excess: float = 0.0
-
-    # final score (0–100)
-    overall_score: float = 0.0
-
-    notes: Optional[str] = None
-
+from states.ContainerPlanMetrics import ContainerPlanMetrics
 
 
 PlanType = Literal["base", "alternate"]
@@ -39,6 +16,7 @@ class ContainerPlanState(BaseModel):
     vendor_name: Optional[str] = None
     
     plan_type: PlanType = Field(default="base", description="Type of container plan (default: base)")
+    moveProposal: Optional[OneMoveProposal] = None
     container_plan_rows: List[ContainerPlanRow] = Field(default_factory=list)
     metrics: ContainerPlanMetrics = Field(default_factory=ContainerPlanMetrics)
 

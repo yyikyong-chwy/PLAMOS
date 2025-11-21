@@ -10,6 +10,7 @@ from uuid import uuid4
 #agents
 from agents.basePlanAgent import basePlanAgent
 from agents.planEvalAgent import planEvalAgent
+from agents.plannerAgent import plannerAgent
 
 #states
 from states.vendorState import vendorState
@@ -30,10 +31,12 @@ def build_graph() -> StateGraph:
     graph = StateGraph(vendorState)
     graph.add_node("basePlanAgent", basePlanAgent)
     graph.add_node("planEvalAgent", planEvalAgent)
+    graph.add_node("plannerAgent", plannerAgent)
     
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
-    graph.add_edge("planEvalAgent", END)
+    graph.add_edge("planEvalAgent", "plannerAgent")
+    graph.add_edge("plannerAgent", END)
     return graph
 
 
