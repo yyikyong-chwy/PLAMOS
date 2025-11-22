@@ -9,8 +9,10 @@ from uuid import uuid4
 
 #agents
 from agents.basePlanAgent import basePlanAgent
-from agents.planEvalAgent import planEvalAgent
-from agents.plannerAgent import plannerAgent
+from agents.planEvalAgent import planEvalAgent 
+from agents.plannerAgent import plannerAgent #this is the one calling llm
+from agents.containerPlanPrepAgent import containerPlanPrepAgent
+from agents.planMoveExecutorAgent import planMoveExecutorAgent
 
 #states
 from states.vendorState import vendorState
@@ -31,12 +33,17 @@ def build_graph() -> StateGraph:
     graph = StateGraph(vendorState)
     graph.add_node("basePlanAgent", basePlanAgent)
     graph.add_node("planEvalAgent", planEvalAgent)
+    graph.add_node("containerPlanPrepAgent", containerPlanPrepAgent)
     graph.add_node("plannerAgent", plannerAgent)
+    graph.add_node("planMoveExecutorAgent", planMoveExecutorAgent)
     
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
-    graph.add_edge("planEvalAgent", "plannerAgent")
-    graph.add_edge("plannerAgent", END)
+    graph.add_edge("planEvalAgent", "containerPlanPrepAgent")
+    graph.add_edge("containerPlanPrepAgent", "plannerAgent")
+    graph.add_edge("plannerAgent", "planMoveExecutorAgent")
+    graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move
+    graph.add_edge("planEvalAgent", END)
     return graph
 
 

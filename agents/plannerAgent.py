@@ -10,7 +10,7 @@ from states.containerPlanState import ContainerPlanState
 from states.ContainerPlanMetrics import ContainerPlanMetrics
 from states.plannerMoveProposal import OneMoveProposal, Reduce, Consolidate, Pad
 
-FULL_THRESHOLD = 0.90
+FULL_THRESHOLD = 0.95
 CLOSE_TO_FULL_MIN = 0.70
 VERY_LOW_UTIL = 0.20
 TEMP = 0.2
@@ -48,7 +48,7 @@ def _containers_df(metrics: ContainerPlanMetrics) -> pd.DataFrame:
             df[c] = None
     return df[cols]
 
-def _pick_target_dest(least_dest: str, partial_dests: list[str]) -> str:
+def _pick_target_dest(from_dest: str, least_dest: str, partial_dests: list[str]) -> str:
     """Pick consolidation target per preference:
     - Default to TNY1 first.
     - If the least-occupied container's DEST is TNY1, then prefer TLA1 if it exists among partial_dests; otherwise MDT1.
@@ -77,15 +77,32 @@ Move types:
 - pad: add CBM goal to a specific container.
 
 Decision:
-1. If all containers are full (≥{int(FULL_THRESHOLD*100)}%) and only one container is partial:
+1. If there are more than one container that is less than {int(FULL_THRESHOLD*100)}% utilization, 
+    a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
+    b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
+
+
+2. If all containers are full (≥{int(FULL_THRESHOLD*100)}%) and only one container is partial:
    a) If the partial one ≥{int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
    b) If the partial one <{int(VERY_LOW_UTIL*100)}%, propose REDUCE to remove it.
    c) Else, propose REDUCE with cbm_goal=0 (leave as is).
 
-2. If >1 container partial (<{int(FULL_THRESHOLD*100)}%):
+3. If >1 container partial (<{int(FULL_THRESHOLD*100)}%):
    a) If two least utilized containers combined CBM ≤ CBM_Max={cbm_max}, CONSOLIDATE both fully (move everything from the lower-utilized into the other).
    b) If combined > CBM_Max, CONSOLIDATE to fill one container (~{int(FULL_THRESHOLD*100)}%), choosing target DEST with this order:
       - Default TNY1 first; but if the least-occupied container is also TNY1, then choose TLA1 **if such a partially filled container exists**, otherwise MDT1. Move only the CBM needed (cbm_move) to reach ~{int(FULL_THRESHOLD*100)}% on the chosen target.
+
+
+## OUTPUT & EXPLANATION REQUIREMENT
+
+- Provide **only** the JSON as specified below.
+- **If you propose any consolidation(s)**, your **rationale must explicitly show the arithmetic** that proves feasibility against `CBM_Max`
+  for **each** consolidation, using this pattern (containers, DESTs, numbers, and inequality):
+  - Example: "The two least utilized containers (container 2 in MDT1 and container 5 in TLA1) can be consolidated as their combined CBM is less than CBM_Max (54.99 + 28.34 = 83.33 <= 64.0)."
+  (Use the actual container IDs, DESTs, and CBM values from context.)
+  - Example: "The two least utilized containers (container 3 in TLA1 with 43.89 CBM and container 4 in TNY1 with 31.59 CBM) can be consolidated. However
+   as their combined CBM is more than CBM_Max (43.89 + 31.59 = 75.48 > 66.0) I propose to move 31.11 CBM from container 3 in TLA1 to container 4 in TNY1 to reach ~95% utilization.
+  - If you propose to reduce, you must first explain how you come to this conclusion and how rule 1, 1a, 1b is applied. In addition, you must provide the cbm_goal and also how you calculated it. 
 
 Return JSON ONLY:
 {{
@@ -144,9 +161,9 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
             elif has_r: data.update({"action": "reduce", "consolidate": None, "pad": None})
             else: data = {"action": "reduce", "rationale": "No valid move", "reduce": {"cbm_goal": 0.0}, "consolidate": None, "pad": None}
         
-        plannerMoveProposal = OneMoveProposal.model_validate(data)        
-        vendor.container_plans[-1].plannerMoveProposal = plannerMoveProposal
+        moveProposal = OneMoveProposal.model_validate(data)        
+        vendor.container_plans[-1].moveProposal = moveProposal
         return vendor
     except (ValueError, ValidationError, json.JSONDecodeError) as e:
-        vendor.container_plans[-1].plannerMoveProposal = OneMoveProposal(action="reduce", rationale=f"Parse error: {e}", reduce=Reduce(cbm_goal=0.0))
+        vendor.container_plans[-1].moveProposal = OneMoveProposal(action="reduce", rationale=f"Parse error: {e}", reduce=Reduce(cbm_goal=0.0))
         return vendor

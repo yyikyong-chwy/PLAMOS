@@ -27,3 +27,5 @@ class OneMoveProposal(BaseModel):
     reduce: Optional[Reduce] = None
     consolidate: Optional[Consolidate] = None
     pad: Optional[Pad] = None
+
+    move_critique: str = Field(default="", max_length=1500)

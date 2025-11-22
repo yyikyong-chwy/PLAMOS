@@ -6,6 +6,7 @@ import pandas as pd
 
 from states.ContainerRow import ContainerPlanRow
 from states.ContainerPlanMetrics import ContainerPlanMetrics
+from states.plannerMoveProposal import OneMoveProposal
 
 
 PlanType = Literal["base", "alternate"]
