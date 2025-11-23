@@ -133,7 +133,7 @@ def df_to_vendor_states(df_sku_data: pd.DataFrame, df_CBM_Max: pd.DataFrame, che
         ) if not df_CBM_Max.loc[df_CBM_Max["vendor_number"] == vendor_code, "CBM Max"].empty else 66.0
         demand_skus = [sku for sku in chewySkuStates if sku.vendor_Code == vendor_code]
         
-        container_plan_state = ContainerPlanState.construct_state(vendor_Code=vendor_code, rows=containerPlanRows, vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")), plan_type="base")
+        container_plan_state = ContainerPlanState.construct_state(vendor_Code=vendor_code, rows=containerPlanRows, vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")), strategy = PlanStrategy.BASE_PLAN,)
 
         # Use model_construct to bypass validation and avoid class identity issues during module reloads
         vs = vendorState.model_construct(

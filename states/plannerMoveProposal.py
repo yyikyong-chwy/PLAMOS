@@ -4,7 +4,7 @@ import json, re
 import pandas as pd
 from pydantic import BaseModel, Field
 
-ActionType = Literal["reduce", "consolidate", "pad"]
+ActionType = Literal["reduce", "consolidate", "pad", "do_nothing"]
 
 class Reduce(BaseModel):
     cbm_goal: float

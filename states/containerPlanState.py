@@ -8,16 +8,8 @@ from enum import Enum
 from states.ContainerRow import ContainerPlanRow
 from states.ContainerPlanMetrics import ContainerPlanMetrics
 from states.plannerMoveProposal import OneMoveProposal
+from states.planStrategy import PlanStrategy
 
-
-
-
-class PlanStrategy(str, Enum):
-    BASE_PLAN              = "basePlan" #split simply according to keppler, then assign containers ignoring its utilization %
-    CONSOLIDATE_REDUCE     = "consolidate_reduce" #consolidate, then reduce. if last container is more than 70% full, then pad it up
-    CONSOLIDATE_ONLY       = "consolidate_only"#consolidate only. if last container is more than 70% full, then pad it up
-    CONSOLIDATE_AND_PAD    = "consolidate_and_pad" #consolidate, and if last container is not full, then pad it up
-    PAD_ONLY               = "pad_only" #pad only. can select any container to pad up to 95% full.
 
 # ---- State object holding the plan as rows, with DF helpers ----
 class ContainerPlanState(BaseModel):

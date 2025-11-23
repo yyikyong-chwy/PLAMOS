@@ -3,15 +3,15 @@ from typing import Optional
 from copy import deepcopy
 
 from states.vendorState import vendorState
-from states.containerPlanState import ContainerPlanState, PlanType
+from states.containerPlanState import ContainerPlanState, PlanStrategy
 from states.ContainerPlanMetrics import ContainerPlanMetrics
 from states.ContainerRow import ContainerPlanRow
+from states.planStrategy import next_strategy
 
 def containerPlanPrepAgent(
     vendor: vendorState,
     *,
     copy_from_index: int = -1,             # which existing plan to copy (default: latest)
-    new_plan_type: PlanType = "alternate", # mark the cloned plan
     strip_assignments: bool = False,        # if True, clear container/cases/cbm so downstream nodes can recompute
     reset_metrics: bool = False             # if True, start with fresh metrics
 ) -> vendorState:
@@ -41,11 +41,13 @@ def containerPlanPrepAgent(
             })
         new_rows.append(ContainerPlanRow.model_validate(data))
 
+    new_plan_strategy = next_strategy(getattr(src_plan, "strategy", PlanStrategy.BASE_PLAN))
+
     # Build the new plan
     new_plan = ContainerPlanState(
         vendor_Code=vendor.vendor_Code,
         vendor_name=vendor.vendor_name,
-        plan_type=new_plan_type,
+        strategy=new_plan_strategy,
         container_plan_rows=new_rows,
         metrics=ContainerPlanMetrics() if reset_metrics else deepcopy(src_plan.metrics),
     )

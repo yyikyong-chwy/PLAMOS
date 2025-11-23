@@ -141,12 +141,11 @@ def consolidate_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) 
 
 
 # ---------------------------- move: REDUCE ---------------------------- #
-
 def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> None:
     """
-    Remove CBM up to cbm_goal by trimming excess_demand on low-runrate SKUs.
-    - Prioritize lower T90_DAILY_AVG SKUs first; within SKU, drain rows with higher cbm_per_case first.
-    - If total feasible CBM from excess < goal, abort without changes.
+    Two-tier reduction strategy:
+      Tier 1: Reduce up to excess_demand, prioritizing low F90_DAILY_AVG SKUs.
+      Tier 2: If cbm_goal remains, reduce further but never below baseDemand.
     """
     cbm_goal = float(_safe_get(move, "reduce.cbm_goal", 0.0) or 0.0)
     if cbm_goal <= 0.0:
@@ -156,113 +155,121 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
     if not plan_rows:
         return
 
-    # Assigned cases & row buckets by SKU
-    assigned_by_sku = defaultdict(int)
+    # Map of SKU -> plan rows
     rows_by_sku: Dict[str, List[ContainerPlanRow]] = defaultdict(list)
     for r in plan_rows:
-        sku = str(r.product_part_number)
-        assigned_by_sku[sku] += int(r.cases_assigned or 0)
-        rows_by_sku[sku].append(r)
+        rows_by_sku[str(r.product_part_number)].append(r)
 
-    # Collect feasible candidates from vendor's ChewySku_info
-    candidates = []
-    for s in getattr(vendor, "ChewySku_info", []) or []:
-        try:
-            sku = str(s.product_part_number)
-            mcp = int(s.MCP or 0)
-            cbm_per_case = float(s.case_pk_CBM or 0.0)
-            excess_eaches = float(s.excess_demand or 0.0)
-            t90 = float(s.T90_DAILY_AVG or 0.0)
-        except Exception:
-            continue
+    # Helper to compute total assigned CBM for a SKU
+    def total_assigned_cbm(sku: str) -> float:
+        return sum(float(r.cbm_assigned or 0.0) for r in rows_by_sku.get(sku, []))
 
-        if mcp <= 0 or cbm_per_case <= 0.0 or excess_eaches <= 0.0:
-            continue
-
-        removable_cases_from_excess = int(excess_eaches // mcp)
-        if removable_cases_from_excess <= 0:
-            continue
-
-        total_assigned_cases_for_sku = int(assigned_by_sku.get(sku, 0))
-        if total_assigned_cases_for_sku <= 0:
-            continue
-
-        max_removable_cases = min(removable_cases_from_excess, total_assigned_cases_for_sku)
-        if max_removable_cases <= 0:
-            continue
-
-        candidates.append({
-            "sku": sku,
-            "t90": t90,
-            "cbm_per_case": cbm_per_case,
-            "max_cases": max_removable_cases,
-        })
-
-    if not candidates:
-        return  # nothing to trim
-
-    # Pre-check feasibility: can we hit cbm_goal?
-    total_possible_cbm = sum(c["max_cases"] * c["cbm_per_case"] for c in candidates)
-    if total_possible_cbm + 1e-9 < cbm_goal:
-        # Not enough excess -> abort w/ NO changes
-        return
-
-    # Execute: lowest T90 first, then higher CBM/Case rows first
-    candidates.sort(key=lambda x: (x["t90"], -x["cbm_per_case"]))
     cbm_removed = 0.0
     goal_left = cbm_goal
 
-    for c in candidates:
+    # --- Tier 1: Reduce from excess ---
+    candidates_t1 = []
+    for s in getattr(vendor, "ChewySku_info", []):
+        sku = str(s.product_part_number)
+        mcp = int(s.MCP or 0)
+        cbm_case = float(s.case_pk_CBM or 0.0)
+        excess_eaches = float(s.excess_demand or 0.0)
+        f90 = float(s.F90_DAILY_AVG or 0.0)
+        if mcp <= 0 or cbm_case <= 0 or excess_eaches <= 0:
+            continue
+        removable_cases = int(excess_eaches // mcp)
+        if removable_cases > 0 and sku in rows_by_sku:
+            candidates_t1.append({
+                "sku": sku,
+                "f90": f90,
+                "cbm_case": cbm_case,
+                "max_cases": removable_cases,
+            })
+
+    candidates_t1.sort(key=lambda x: x["f90"])
+
+    for c in candidates_t1:
         if goal_left <= 1e-9:
             break
 
         sku = c["sku"]
-        cbm_case = c["cbm_per_case"]
-        cases_left_for_sku = int(min(c["max_cases"], assigned_by_sku.get(sku, 0)))
-        if cases_left_for_sku <= 0:
-            continue
+        cbm_case = c["cbm_case"]
+        removable_cases = c["max_cases"]
+        rows = sorted(rows_by_sku[sku], key=lambda r: float(r.case_pk_CBM or 0.0), reverse=True)
 
-        sku_rows = rows_by_sku.get(sku, [])
-        sku_rows_sorted = sorted(sku_rows, key=lambda r: float(r.case_pk_CBM or 0.0), reverse=True)
-
-        for row in sku_rows_sorted:
-            if goal_left <= 1e-9 or cases_left_for_sku <= 0:
+        for row in rows:
+            if goal_left <= 1e-9 or removable_cases <= 0:
                 break
-
-            row_cases = int(row.cases_assigned or 0)
-            if row_cases <= 0:
-                continue
-
-            max_by_row = min(row_cases, cases_left_for_sku)
-
-            # Cases needed by remaining goal (integer)
-            max_by_goal = int(goal_left // cbm_case)
-            if max_by_goal <= 0 and goal_left > 1e-12:
-                cases_to_remove = 1 if max_by_row >= 1 else 0
-            else:
-                cases_to_remove = min(max_by_row, max_by_goal)
-
+            cases_to_remove = min(removable_cases, int(row.cases_assigned or 0))
+            cbm_delta = cases_to_remove * cbm_case
+            if cbm_delta > goal_left:
+                cases_to_remove = int(goal_left // cbm_case)
+                cbm_delta = cases_to_remove * cbm_case
             if cases_to_remove <= 0:
                 continue
 
-            cbm_delta = cases_to_remove * cbm_case
+            # Apply removal
+            row.cases_assigned = max(0, int(row.cases_assigned or 0) - cases_to_remove)
+            row.cbm_assigned = row.cases_assigned * cbm_case
+            cbm_removed += cbm_delta
+            goal_left = cbm_goal - cbm_removed
+            removable_cases -= cases_to_remove
 
-            # Apply to row
-            row.cases_assigned = int(row.cases_assigned) - cases_to_remove
-            if row.cases_assigned < 0:
-                row.cases_assigned = 0
-            row.cbm_assigned = float(row.cases_assigned) * float(row.case_pk_CBM or 0.0)
+    # --- Tier 2: Reduce but not below baseDemand ---
+    if goal_left > 1e-9:
+        candidates_t2 = []
+        for s in getattr(vendor, "ChewySku_info", []):
+            sku = str(s.product_part_number)
+            mcp = int(s.MCP or 0)
+            cbm_case = float(s.case_pk_CBM or 0.0)
+            base_eaches = float(s.baseDemand or 0.0)
+            f90 = float(s.F90_DAILY_AVG or 0.0)
+            if mcp <= 0 or cbm_case <= 0:
+                continue
+            base_cases = int(base_eaches // mcp)
+            assigned_cases = sum(int(r.cases_assigned or 0) for r in rows_by_sku.get(sku, []))
+            removable_cases = max(0, assigned_cases - base_cases)
+            if removable_cases > 0 and sku in rows_by_sku:
+                candidates_t2.append({
+                    "sku": sku,
+                    "f90": f90,
+                    "cbm_case": cbm_case,
+                    "max_cases": removable_cases,
+                })
 
-            # Track
-            assigned_by_sku[sku] -= cases_to_remove
-            cases_left_for_sku  -= cases_to_remove
-            cbm_removed         += cbm_delta
-            goal_left           = max(0.0, cbm_goal - cbm_removed)
+        candidates_t2.sort(key=lambda x: x["f90"])
 
-    # Feasibility check guarantees we should be at or above goal within epsilon.
+        for c in candidates_t2:
+            if goal_left <= 1e-9:
+                break
+
+            sku = c["sku"]
+            cbm_case = c["cbm_case"]
+            removable_cases = c["max_cases"]
+            rows = sorted(rows_by_sku[sku], key=lambda r: float(r.case_pk_CBM or 0.0), reverse=True)
+
+            for row in rows:
+                if goal_left <= 1e-9 or removable_cases <= 0:
+                    break
+                cases_to_remove = min(removable_cases, int(row.cases_assigned or 0))
+                cbm_delta = cases_to_remove * cbm_case
+                if cbm_delta > goal_left:
+                    cases_to_remove = int(goal_left // cbm_case)
+                    cbm_delta = cases_to_remove * cbm_case
+                if cases_to_remove <= 0:
+                    continue
+
+                row.cases_assigned = max(0, int(row.cases_assigned or 0) - cases_to_remove)
+                row.cbm_assigned = row.cases_assigned * cbm_case
+                cbm_removed += cbm_delta
+                goal_left = cbm_goal - cbm_removed
+                removable_cases -= cases_to_remove
+
+    # Done – goal achieved or exhausted feasible removals
+    return
 
 
-# ---------------------------- move: PAD (stub) ---------------------------- #
+
 
 # ---------------------------- move: PAD ---------------------------- #
 
