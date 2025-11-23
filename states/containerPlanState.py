@@ -3,20 +3,28 @@ from __future__ import annotations
 from typing import Optional, Dict, List, Literal, Iterable
 from pydantic import BaseModel, Field
 import pandas as pd
+from enum import Enum
 
 from states.ContainerRow import ContainerPlanRow
 from states.ContainerPlanMetrics import ContainerPlanMetrics
 from states.plannerMoveProposal import OneMoveProposal
 
 
-PlanType = Literal["base", "alternate"]
+
+
+class PlanStrategy(str, Enum):
+    BASE_PLAN              = "basePlan" #split simply according to keppler, then assign containers ignoring its utilization %
+    CONSOLIDATE_REDUCE     = "consolidate_reduce" #consolidate, then reduce. if last container is more than 70% full, then pad it up
+    CONSOLIDATE_ONLY       = "consolidate_only"#consolidate only. if last container is more than 70% full, then pad it up
+    CONSOLIDATE_AND_PAD    = "consolidate_and_pad" #consolidate, and if last container is not full, then pad it up
+    PAD_ONLY               = "pad_only" #pad only. can select any container to pad up to 95% full.
 
 # ---- State object holding the plan as rows, with DF helpers ----
 class ContainerPlanState(BaseModel):
     vendor_Code: str
     vendor_name: Optional[str] = None
     
-    plan_type: PlanType = Field(default="base", description="Type of container plan (default: base)")
+    strategy: PlanStrategy = Field(default=PlanStrategy.BASE_PLAN, description="Strategy for the container plan (default: basePlan)")
     moveProposal: Optional[OneMoveProposal] = None
     container_plan_rows: List[ContainerPlanRow] = Field(default_factory=list)
     metrics: ContainerPlanMetrics = Field(default_factory=ContainerPlanMetrics)
@@ -50,7 +58,7 @@ class ContainerPlanState(BaseModel):
         vendor_Code: str,
         rows: List[ContainerPlanRow],
         vendor_name: Optional[str] = None,
-        plan_type: PlanType = "base",
+        strategy: PlanStrategy = PlanStrategy.BASE_PLAN,
     ) -> "ContainerPlanState":
         """
         Create a ContainerPlanState for a single vendor by filtering the given rows.
@@ -60,7 +68,7 @@ class ContainerPlanState(BaseModel):
         return cls(
             vendor_Code=vendor_Code,
             vendor_name=vendor_name,
-            plan_type=plan_type,
+            strategy=strategy,
             container_plan_rows=filtered,
             # metrics will use default_factory
         )

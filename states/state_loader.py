@@ -11,7 +11,7 @@ from states.ChewySkuState import ChewySkuState  # alt layout
 from states.ContainerRow import ContainerPlanRow
 from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
-
+from states.containerPlanState import PlanStrategy
 
 
 # ---------- Loader ----------
@@ -141,6 +141,7 @@ def df_to_vendor_states(df_sku_data: pd.DataFrame, df_CBM_Max: pd.DataFrame, che
             vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")),
             CBM_Max=cbm_max,
             ChewySku_info=demand_skus,
+            strategy=PlanStrategy.BASE_PLAN, #always start with base plan
             container_plans=[container_plan_state] #inserting a blank one for now, will add more later
         )
         out.append(vs)
