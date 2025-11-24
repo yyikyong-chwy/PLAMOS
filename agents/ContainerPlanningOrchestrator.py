@@ -5,7 +5,7 @@ from typing import Optional
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage, HumanMessage
-from uuid import uuid4
+#from uuid import uuid7
 from langchain_core.runnables.graph import MermaidDrawMethod
 
 
@@ -44,16 +44,17 @@ def build_graph() -> StateGraph:
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
     graph.add_edge("containerPlanPrepAgent", "plannerAgent")
-    graph.add_edge("plannerAgent", "planMoveCritiqueAgent")
+    graph.add_edge("plannerAgent", "planMoveExecutorAgent")
+    #graph.add_edge("plannerAgent", "planMoveCritiqueAgent")
 
-    graph.add_conditional_edges(
-        "planMoveCritiqueAgent",
-        planMoveCritiqueAgent_router,
-        {
-            "proceed": "planMoveExecutorAgent",
-            "revise": "plannerAgent",
-        },
-    )
+    # graph.add_conditional_edges(
+    #     "planMoveCritiqueAgent",
+    #     planMoveCritiqueAgent_router,
+    #     {
+    #         "proceed": "planMoveExecutorAgent",
+    #         "revise": "plannerAgent",
+    #     },
+    # )
 
     graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move
 
@@ -98,7 +99,8 @@ if __name__ == "__main__":
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
 
-        config = {"configurable": {"thread_id": "test_session"}}
+        config = {"configurable": {"thread_id": "test_session"},
+         "recursion_limit": 80,  }
         app = compile_app()
 
         app.get_graph().draw_mermaid_png(

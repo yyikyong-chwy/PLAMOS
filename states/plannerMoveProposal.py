@@ -16,7 +16,7 @@ class Consolidate(BaseModel):
     from_container: int
     to_dest: str
     to_container: int
-    cbm_move: float
+    #cbm_move: float
 
 class Pad(BaseModel):
     dest: str

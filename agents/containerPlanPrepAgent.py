@@ -27,7 +27,8 @@ def containerPlanPrepAgent(
         return vendor
 
     copy_from_index = 0 #always start from the first plan
-    src_plan: ContainerPlanState = vendor.container_plans[copy_from_index]
+    latest_plan: ContainerPlanState = vendor.container_plans[-1]
+    src_plan: ContainerPlanState = vendor.container_plans[copy_from_index]    
 
     # Deep-copy rows and (optionally) wipe assignments so the next agent can re-compute
     new_rows: list[ContainerPlanRow] = []
@@ -41,7 +42,7 @@ def containerPlanPrepAgent(
             })
         new_rows.append(ContainerPlanRow.model_validate(data))
 
-    new_plan_strategy = next_strategy(getattr(src_plan, "strategy", PlanStrategy.BASE_PLAN))
+    new_plan_strategy = next_strategy(getattr(latest_plan, "strategy", PlanStrategy.BASE_PLAN))
 
     # Build the new plan
     new_plan = ContainerPlanState(

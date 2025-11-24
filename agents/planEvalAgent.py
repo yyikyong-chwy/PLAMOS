@@ -13,6 +13,9 @@ from states.vendorState import vendorState                 # :contentReference[o
 from states.containerPlanState import ContainerPlanMetrics
 from states.planStrategy import PlanStrategy
 
+FULL_THRESHOLD = 0.95
+ALMOST_FULL_MIN = 0.70
+VERY_LOW_UTIL = 0.20
 PLAN_EVAL_MAX_LOOPS = 10
 
 #simple aid functions
@@ -101,6 +104,70 @@ def _weighted_underfill_penalty(final_cases: pd.Series, target_cases: pd.Series,
     penalty = float((abs_pct * weights).sum())
 
     return float(np.clip(penalty, 0, 1))
+
+def _container_status(u: float) -> str:
+        # Order matters; ties go to the "more full" bucket unless specified.
+        if u >= FULL_THRESHOLD:
+            return "FULL"
+        if u >= ALMOST_FULL_MIN:
+            return "NOT_QUITE_FULL"
+        if u <= VERY_LOW_UTIL:
+            return "LOW_UTIL"
+        return "PARTIAL_UTIL"
+
+#this is to fight hallucination in LLM. it continually fail to understand the status of the containers and the rules.
+def _generate_container_utilization_status_info(df: pd.DataFrame) -> str:
+    """
+    Build a message about container fullness and embed which containers are not full.
+    Expects columns: ['DEST', 'container', 'status', 'util'].
+      - 'status': string like 'FULL', 'CLOSE_TO_FULL', 'PARTIAL_UTIL', 'LOW_UTIL'
+      - 'util': fraction in [0,1] (e.g., 0.836859)
+    """
+    if df is None or df.empty:
+        return "no containers present"
+
+    needed = {"DEST", "container", "status", "util"}
+    missing = needed - set(df.columns)
+    if missing:
+        raise ValueError(f"DataFrame is missing required columns: {sorted(missing)}")
+
+    # Normalize status and find non-full rows
+    tmp = df.copy()
+    tmp["STATUS_NORM"] = tmp["status"].astype(str).str.upper()
+    non_full = tmp[tmp["STATUS_NORM"] != "FULL"].copy()
+
+    count = len(non_full)
+    if count == 0:
+        return "all containers are full"
+
+    # Build labels like "TNY1-6 (ALMOST_FULL, 83.69% utilized)"
+    def _label(row) -> str:
+        util_pct = f"{float(row['util'])*100:.2f}%"
+        return f"{row['DEST']}-{row['container']} ({row['STATUS_NORM']}, {util_pct} utilized)"
+
+    labels = [_label(r) for _, r in non_full.iterrows()]
+    label_str = ", ".join(labels)
+
+    # Count categories (only add these if present)
+    vc = non_full["STATUS_NORM"].value_counts()
+    almost_full_n = int(vc.get("NOT_QUITE_FULL", 0))
+    partial_n = int(vc.get("PARTIAL_UTIL", 0))
+    low_util_n = int(vc.get("LOW_UTIL", 0))
+
+    counts_bits = []
+    if almost_full_n > 0:
+        counts_bits.append(f"{almost_full_n} NOT_QUITE_FULL")
+    if partial_n > 0:
+        counts_bits.append(f"{partial_n} PARTIAL_UTIL")
+    if low_util_n > 0:
+        counts_bits.append(f"{low_util_n} LOW_UTIL")
+
+    counts_suffix = f" (including {', '.join(counts_bits)})" if counts_bits else ""
+
+    if count == 1:
+        return f"there is only one container that is not full: {label_str}{counts_suffix}"
+    else:
+        return f"there are more than one container that is not full: {label_str}{counts_suffix}"
 
 def planEvalAgent(vendor: vendorState) -> vendorState:
 
@@ -207,12 +274,22 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
                 .rename(columns={"cbm_assigned": "cbm_used"})
         )
         used_by_cdest_df["capacity_cbm"] = cbm_cap
+        used_by_cdest_df["util"] = used_by_cdest_df["cbm_used"] / used_by_cdest_df["capacity_cbm"]
         # Unused = max(capacity - used, 0). If a container overflows, unused=0 (overflow can be inferred via cbm_used > capacity).
         used_by_cdest_df["unused_cbm"] = (used_by_cdest_df["capacity_cbm"] - used_by_cdest_df["cbm_used"]).clip(lower=0.0)
 
+        used_by_cdest_df["status"] = used_by_cdest_df["util"].apply(_container_status)
+
         total_cbm_used_by_container_dest = used_by_cdest_df.to_dict(orient="records")
+
+        container_utilization_status_info = _generate_container_utilization_status_info(used_by_cdest_df)
     else:
         total_cbm_used_by_container_dest = [] #empty list if no df
+        container_utilization_status_info = "no containers present"
+
+    print("-------Container Utilization Status Info-----------")
+    print(container_utilization_status_info)
+    print("--------------------------------")
 
     #    Allocate each SKU's excess_cases across its assigned containers
     #    proportional to cases_assigned per container, then convert to CBM.
@@ -268,6 +345,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         overall_score=float(overall),
         total_cbm_used_by_container_dest=total_cbm_used_by_container_dest,
         total_excess_in_cbm_by_container=total_excess_in_cbm_by_container,
+        container_utilization_status_info=container_utilization_status_info,
     )
 
     vendor.container_plans[-1].metrics = latest_plan_metrics    

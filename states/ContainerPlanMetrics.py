@@ -22,6 +22,7 @@ class ContainerPlanMetrics(BaseModel):
     ape_vs_excess: float = 0.0
 
     total_cbm_used_by_container_dest: List[Dict[str, Union[str, int, float]]] = Field(default_factory=list)
+    container_utilization_status_info: Optional[str] = None
     # Total EXCESS CBM attributed to each container (key = container id as str/int)
     # e.g. {"1": 8.4, "2": 0.0} or {1: 8.4, 2: 0.0}
     total_excess_in_cbm_by_container: Dict[Union[str, int], float] = Field(default_factory=dict)

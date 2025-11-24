@@ -12,83 +12,92 @@ from states.containerPlanState import PlanStrategy
 from states.plannerMoveProposal import OneMoveProposal, Reduce, Consolidate, Pad
 
 FULL_THRESHOLD = 0.95
-CLOSE_TO_FULL_MIN = 0.70
+ALMOST_FULL_MIN = 0.70
 VERY_LOW_UTIL = 0.20
-TEMP = 0.2
-PLAN_EVAL_MAX_LOOP = 6
+TEMP = 0
 
 ActionType = Literal["reduce", "consolidate", "pad"]
 
 def apply_prompt_rules(vendor: vendorState):
-    cbm_max = float(getattr(vendor, "CBM_Max", 66.0) or 66.0)
+
     startegy = vendor.container_plans[-1].strategy
     rule_prompt = ""
     if startegy == PlanStrategy.CONSOLIDATE_REDUCE:
         rule_prompt = f"""
         RULES (exactly ONE move: reduce | consolidate | pad)
 
+        Status types:
+        - FULL: the container is full.
+        - NOT_QUITE_FULL: the container is not quite full, but close to full.
+        - LOW_UTIL: the container is low utilized.
+        - PARTIAL_UTIL: the container is partially utilized, but not low utilized.
+
         Move types:
         - reduce: propose a CBM goal to remove.
         - consolidate: move all or portion (cbm_move) from a partial container into another partial one.
         - pad: add CBM goal to a specific container.
 
-        Decision:
-        1. If there is only one container that is less than {int(FULL_THRESHOLD*100)}% utilization, and it is less than {int(VERY_LOW_UTIL*100)}%, propose REDUCE to remove it.
-        
-        2. If there is only one container that is less than {int(FULL_THRESHOLD*100)}% utilization, and it is more than {int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
-        
-        3. If there is only one container that is less than {int(FULL_THRESHOLD*100)}% utilization, and it is more than {int(CLOSE_TO_FULL_MIN*100)}%, propose do_nothing.
-        
-        4. If there are more than one container that is less than {int(FULL_THRESHOLD*100)}% utilization, starting with the least utilized container, propose move as much as
-         possible from the least utilized container to the next least utilized container             
+        RULES:
+        1. Never propose anything on a container that has status FULL.
 
-        5. if none of rule 1 to 4 applies, propose do_nothing.
+        2. if ALL containers have status FULL, propose do_nothing.
+
+        3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, propose to consolidate them. 
+        Propose to move as much as possible from the least utilized container to the next least utilized container.             
+
+        4. if ALL but one containers have status FULL, and that single container is LOW_UTIL, propose REDUCE the former container to remove it.
+        
+        5. if ALL but one containers have status FULL, and that single container is NOT_QUITE_FULL, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+                        
+        6. if none of rule 1 to 5 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.CONSOLIDATE_ONLY:
         rule_prompt += f"""
         RULES (exactly ONE move:  consolidate | pad | do_nothing)
 
+        Status types:
+        - FULL: the container is full.
+        - NOT_QUITE_FULL: the container is not quite full, but close to full.
+        - LOW_UTIL: the container is low utilized.
+        - PARTIAL_UTIL: the container is partially utilized, but not low utilized.
+
         Move types:
         - consolidate: move all or portion (cbm_move) from a partial container into another partial one.
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If there are more than one container that is less than {int(FULL_THRESHOLD*100)}% utilization, 
+        1. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
 
-        2. If all containers are full (≥{int(FULL_THRESHOLD*100)}%) and only one container is partial:
-            a) If the partial one ≥{int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+        2. If all containers are FULL and only one container is NOT_QUITE_FULL:
+            a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
 
-        3. If >1 container partial (<{int(FULL_THRESHOLD*100)}%):
-            a) If two least utilized containers combined CBM ≤ CBM_Max={cbm_max}, CONSOLIDATE both fully (move everything from the lower-utilized into the other).
-            b) If combined > CBM_Max, CONSOLIDATE to fill one container (~{int(FULL_THRESHOLD*100)}%), choosing target DEST with this order:
-                - Default TNY1 first; but if the least-occupied container is also TNY1, then choose TLA1 **if such a partially filled container exists**, otherwise MDT1. Move only the CBM needed (cbm_move) to reach ~{int(FULL_THRESHOLD*100)}% on the chosen target.
-
-        4. Propose do_nothing.
+        3. if none of rule 1 to 2 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.CONSOLIDATE_AND_PAD:
         rule_prompt += f"""
         RULES (exactly ONE move:  consolidate | pad | do_nothing)
 
+        Status types:
+        - FULL: the container is full.
+        - NOT_QUITE_FULL: the container is not quite full, but close to full.
+        - LOW_UTIL: the container is low utilized.
+        - PARTIAL_UTIL: the container is partially utilized, but not low utilized.
+
         Move types:
         - consolidate: move all or portion (cbm_move) from a partial container into another partial one.
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If there are more than one container that is less than {int(FULL_THRESHOLD*100)}% utilization, 
+        1. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
 
-        2. If all containers are full (≥{int(FULL_THRESHOLD*100)}%) and **only** one container is partial:
-            a) If the partial one ≥{int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+        2. If all containers are FULL and **only** one container is not status FULL:
+            a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
 
-        3. If >1 container partial (<{int(FULL_THRESHOLD*100)}%):
-            a) If two least utilized containers combined CBM ≤ CBM_Max={cbm_max}, CONSOLIDATE both fully (move everything from the lower-utilized into the other).
-            b) If combined > CBM_Max, CONSOLIDATE to fill one container (~{int(FULL_THRESHOLD*100)}%), choosing target DEST with this order:
-                - Default TNY1 first; but if the least-occupied container is also TNY1, then choose TLA1 **if such a partially filled container exists**, otherwise MDT1. Move only the CBM needed (cbm_move) to reach ~{int(FULL_THRESHOLD*100)}% on the chosen target.
-
-        4. If no container is partial, propose DO_NOTHING.
+        3. if none of rule 1 to 2 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.PAD_ONLY:
         rule_prompt += f"""
@@ -98,9 +107,9 @@ def apply_prompt_rules(vendor: vendorState):
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If any container is partial ≥{int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+        1. If any container is not statusFULL, propose PAD one of them randomlyto reach ~{int(FULL_THRESHOLD*100)}%.
 
-        2. If no container is partial, propose DO_NOTHING.
+        2. If no container is not status FULL, propose do_nothing.
         """
 
 
@@ -110,20 +119,18 @@ def apply_prompt_rules(vendor: vendorState):
 
         - Provide **only** the JSON as specified below.
         - **If you propose any consolidation(s)**, your **rationale must explicitly state which rule is applied and why.**
-        for **each** consolidation, using this pattern (containers, DESTs, numbers, and inequality):
-        - Example: "The two least utilized containers (container 2 in MDT1 and container 5 in TLA1) can be consolidated as their combined CBM is less than CBM_Max (54.99 + 28.34 = 83.33 <= 64.0)."
-        (Use the actual container IDs, DESTs, and CBM values from context.)
-        - Example: "The two least utilized containers (container 3 in TLA1 with 43.89 CBM and container 4 in TNY1 with 31.59 CBM) can be consolidated. However
-        as their combined CBM is more than CBM_Max (43.89 + 31.59 = 75.48 > 66.0) I propose to move 31.11 CBM from container 3 in TLA1 to container 4 in TNY1 to reach ~95% utilization.
-        - If you propose to reduce, you must first explain how you come to this conclusion and how rule 1, 1a, 1b is applied. In addition, you must provide the cbm_goal and also how you calculated it. 
+        for **each** consolidation, using this pattern (containers, DESTs, status):
+        - Example: "The two least utilized containers (container 2 in MDT1 and container 5 in TLA1) can be consolidated as their status is not FULL."
+        - whatever move you propose, you must first explain how you come to this conclusion and which rule 1, 2a, 2b is applied.You need to justify how that rule is applicable in this scenario
 
         Return JSON ONLY:
         {{
-        "action": "reduce" | "consolidate" | "pad",
+        "action": "reduce" | "consolidate" | "pad" | "do_nothing",
         "rationale": "string",
         "reduce": {{"cbm_goal": 0.0}} | null,
-        "consolidate": {{"from_dest": "", "from_container": 0, "to_dest": "", "to_container": 0, "cbm_move": 0.0}} | null,
-        "pad": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null
+        "consolidate": {{"from_dest": "", "from_container": 0, "to_dest": "", "to_container": 0, }} | null,
+        "pad": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null,
+        "do_nothing": null
         }}
     """
     return rule_prompt
@@ -148,7 +155,7 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 def _containers_df(metrics: ContainerPlanMetrics) -> pd.DataFrame:
     rows = getattr(metrics, "total_cbm_used_by_container_dest", None) or []
-    cols = ["DEST", "container", "cbm_used", "capacity_cbm", "unused_cbm"]
+    cols = ["DEST", "container", "cbm_used", "capacity_cbm", "unused_cbm", "status"]
     if not rows:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame(rows)
@@ -178,10 +185,10 @@ def _get_latest_critique(plan: ContainerPlanState) -> Optional[dict]:
     critique = getattr(move, "moveCritique", None) if move else None
     return critique
 
-def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, plan_df: pd.DataFrame, critique: Optional[dict] = None) -> str:
+def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, critique: Optional[dict] = None) -> str:
     cbm_max = float(getattr(vendor, "CBM_Max", 66.0) or 66.0)
-    dest_cbm = plan_df.groupby("DEST")["cbm_assigned"].sum().to_dict() if not plan_df.empty else {}
     cont_df = _containers_df(metrics)
+    container_utilization_status_info_msg = metrics.container_utilization_status_info
 
     rules = apply_prompt_rules(vendor)
 
@@ -191,10 +198,11 @@ def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, pla
     else "")
 
 
+    #taking out the containers df for now
+    #CONTAINERS: {_safe_json(cont_df.to_dict(orient='records'))}
     context = f"""
     VENDOR: {vendor.vendor_Code}, CBM_Max={cbm_max}
-    DEST→CBM used: {_safe_json(dest_cbm)}
-    CONTAINERS: {_safe_json(cont_df.to_dict(orient='records'))}
+    CONTAINER UTILIZATION STATUS: {container_utilization_status_info_msg}
     {critique_section}
     """
     return f"You are a planning analyst. Suggest ONE move based on the rules.\n\n{rules}\n\n{context}"
@@ -205,14 +213,11 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
         return OneMoveProposal(action="reduce", rationale="No plan available", reduce=Reduce(cbm_goal=0.0))
 
     plan: ContainerPlanState = vendor.container_plans[-1]
-    df = plan.to_df()
+    #df = plan.to_df()
     metrics = plan.metrics
 
-    if df.empty:
-        return OneMoveProposal(action="reduce", rationale="Empty plan", reduce=Reduce(cbm_goal=0.0))
-
     critique = _get_latest_critique(plan)
-    prompt = build_planner_prompt(vendor, metrics, df, critique)
+    prompt = build_planner_prompt(vendor, metrics, critique)
     try:
         client = OpenAI()
         raw = (client.chat.completions.create(
@@ -227,18 +232,10 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
         data = _extract_json(raw)
 
         #debug
+        print(vendor.vendor_Code)
         print(data['rationale'])
         print(pd.DataFrame(vendor.container_plans[-1].metrics.total_cbm_used_by_container_dest))
         print(pd.DataFrame(data))
-
-
-        has_r, has_c, has_p = bool(data.get("reduce")), bool(data.get("consolidate")), bool(data.get("pad"))
-        count = sum([has_r, has_c, has_p])
-        if count != 1:
-            if has_c: data.update({"action": "consolidate", "reduce": None, "pad": None})
-            elif has_p: data.update({"action": "pad", "reduce": None, "consolidate": None})
-            elif has_r: data.update({"action": "reduce", "consolidate": None, "pad": None})
-            else: data = {"action": "reduce", "rationale": "No valid move", "reduce": {"cbm_goal": 0.0}, "consolidate": None, "pad": None}
         
         moveProposal = OneMoveProposal.model_validate(data)        
         vendor.container_plans[-1].moveProposal = moveProposal
