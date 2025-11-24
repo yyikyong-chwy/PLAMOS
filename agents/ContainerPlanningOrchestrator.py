@@ -6,10 +6,12 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import AIMessage, HumanMessage
 from uuid import uuid4
+from langchain_core.runnables.graph import MermaidDrawMethod
+
 
 #agents
 from agents.basePlanAgent import basePlanAgent
-from agents.planEvalAgent import planEvalAgent 
+from agents.planEvalAgent import planEvalAgent, plan_eval_router
 from agents.plannerAgent import plannerAgent #this is the one calling llm
 from agents.containerPlanPrepAgent import containerPlanPrepAgent
 from agents.planMoveExecutorAgent import planMoveExecutorAgent
@@ -24,7 +26,7 @@ import states.state_loader as state_loader
 
 def compile_app():
     graph = build_graph()
-    memory = MemorySaver()
+    memory = MemorySaver()        
     return graph.compile(checkpointer=memory)
 
 def build_graph() -> StateGraph:
@@ -43,7 +45,19 @@ def build_graph() -> StateGraph:
     graph.add_edge("containerPlanPrepAgent", "plannerAgent")
     graph.add_edge("plannerAgent", "planMoveExecutorAgent")
     graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move
-    graph.add_edge("planEvalAgent", END)
+
+    graph.add_conditional_edges(
+        "planEvalAgent",
+        plan_eval_router,
+        {
+            "next_plan": "containerPlanPrepAgent",
+            "next_move": "plannerAgent",
+            "end": END,
+        },
+    )
+    
+
+
     return graph
 
 
@@ -77,6 +91,11 @@ if __name__ == "__main__":
 
         config = {"configurable": {"thread_id": "test_session"}}
         app = compile_app()
+
+        app.get_graph().draw_mermaid_png(
+            output_file_path="graph.png",
+            draw_method=MermaidDrawMethod.API,
+        )
         state = app.invoke(current_vendor_state, config=config)
         current_vendor_state = vendorState.model_validate(state)        
         #print("\n\nContainer Plan Rows:\n", current_vendor_state.container_plans[0].to_df())

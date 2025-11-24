@@ -20,6 +20,7 @@ class ContainerPlanState(BaseModel):
     moveProposal: Optional[OneMoveProposal] = None
     container_plan_rows: List[ContainerPlanRow] = Field(default_factory=list)
     metrics: ContainerPlanMetrics = Field(default_factory=ContainerPlanMetrics)
+    plan_loop_counter: int = Field(default=1, description="Number of times the current plan has looped through the planner agent")
 
     # --- Fast conversion to DataFrame when processing inside nodes ---
     def to_df(self) -> pd.DataFrame:
@@ -63,4 +64,5 @@ class ContainerPlanState(BaseModel):
             strategy=strategy,
             container_plan_rows=filtered,
             # metrics will use default_factory
+            plan_loop_counter=1,
         )

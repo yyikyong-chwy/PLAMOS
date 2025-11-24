@@ -11,8 +11,9 @@ import numpy as np
 from states.ContainerRow import ContainerPlanRow  # :contentReference[oaicite:5]{index=5}
 from states.vendorState import vendorState                 # :contentReference[oaicite:7]{index=7}
 from states.containerPlanState import ContainerPlanMetrics
+from states.planStrategy import PlanStrategy
 
-
+PLAN_EVAL_MAX_LOOPS = 10
 
 #simple aid functions
 def _safe_div(a: float, b: float) -> float:
@@ -272,3 +273,28 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
     vendor.container_plans[-1].metrics = latest_plan_metrics    
     return vendor
 
+def plan_eval_router(vendor: vendorState) -> str:
+    if not vendor.container_plans:
+        return "end"
+
+    plan = vendor.container_plans[-1]
+    move_action = str(getattr(getattr(plan, "moveProposal", None), "action", "") or "").lower()
+    is_do_nothing_move = move_action == "do_nothing"
+    loop_counter = getattr(plan, "plan_loop_counter", 1) or 1
+
+    over_loop_limit = loop_counter > PLAN_EVAL_MAX_LOOPS
+    is_last_strategy = plan.strategy == PlanStrategy.PAD_ONLY
+
+    if is_do_nothing_move and is_last_strategy:
+        return "end"
+    elif over_loop_limit and not is_last_strategy:
+        return "next_plan"
+    elif over_loop_limit and is_last_strategy:
+        return "end"
+    elif not is_do_nothing_move:
+        plan.plan_loop_counter += 1
+        return "next_move"
+    elif is_do_nothing_move:
+        return "next_plan"
+    else: #should not happen
+        return "end"

@@ -15,6 +15,7 @@ FULL_THRESHOLD = 0.95
 CLOSE_TO_FULL_MIN = 0.70
 VERY_LOW_UTIL = 0.20
 TEMP = 0.2
+PLAN_EVAL_MAX_LOOP = 6
 
 ActionType = Literal["reduce", "consolidate", "pad"]
 
