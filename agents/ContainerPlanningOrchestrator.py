@@ -15,6 +15,7 @@ from agents.planEvalAgent import planEvalAgent, plan_eval_router
 from agents.plannerAgent import plannerAgent #this is the one calling llm
 from agents.containerPlanPrepAgent import containerPlanPrepAgent
 from agents.planMoveExecutorAgent import planMoveExecutorAgent
+from agents.planMoveCritiqueAgent import planMoveCritiqueAgent, planMoveCritiqueAgent_router
 
 #states
 from states.vendorState import vendorState
@@ -37,12 +38,22 @@ def build_graph() -> StateGraph:
     graph.add_node("planEvalAgent", planEvalAgent)
     graph.add_node("containerPlanPrepAgent", containerPlanPrepAgent)
     graph.add_node("plannerAgent", plannerAgent)
+    graph.add_node("planMoveCritiqueAgent", planMoveCritiqueAgent)
     graph.add_node("planMoveExecutorAgent", planMoveExecutorAgent)
     
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
     graph.add_edge("containerPlanPrepAgent", "plannerAgent")
-    graph.add_edge("plannerAgent", "planMoveExecutorAgent")
+
+    graph.add_conditional_edges(
+        "planMoveCritiqueAgent",
+        planMoveCritiqueAgent_router,
+        {
+            "proceed": "planMoveExecutorAgent",
+            "revise": "plannerAgent",
+        },
+    )
+
     graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move
 
     graph.add_conditional_edges(
@@ -55,8 +66,6 @@ def build_graph() -> StateGraph:
         },
     )
     
-
-
     return graph
 
 

@@ -4,6 +4,8 @@ import json, re
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from agents.planMoveCritiqueAgent import CritiqueResult
+
 ActionType = Literal["reduce", "consolidate", "pad", "do_nothing"]
 
 class Reduce(BaseModel):
@@ -28,4 +30,4 @@ class OneMoveProposal(BaseModel):
     consolidate: Optional[Consolidate] = None
     pad: Optional[Pad] = None
 
-    move_critique: str = Field(default="", max_length=1500)
+    move_critique: Optional[CritiqueResult] = None
