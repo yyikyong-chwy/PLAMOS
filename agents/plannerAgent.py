@@ -171,18 +171,31 @@ def _pick_target_dest(from_dest: str, least_dest: str, partial_dests: list[str])
     # fallback to least_dest if no preferred dest available
     return least_dest if from_dest == "TNY1" else "TNY1"
 
+def _get_latest_critique(plan: ContainerPlanState) -> Optional[dict]:
+    """Fetch any critique attached to the latest move proposal.
+    """
+    move = getattr(plan, "moveProposal", None)
+    critique = getattr(move, "moveCritique", None) if move else None
+    return critique
 
-def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, plan_df: pd.DataFrame) -> str:
+def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, plan_df: pd.DataFrame, critique: Optional[dict] = None) -> str:
     cbm_max = float(getattr(vendor, "CBM_Max", 66.0) or 66.0)
     dest_cbm = plan_df.groupby("DEST")["cbm_assigned"].sum().to_dict() if not plan_df.empty else {}
     cont_df = _containers_df(metrics)
 
     rules = apply_prompt_rules(vendor)
 
+    critique_section = (
+    f"\nCRITIQUE on last rationale (address and fix these issues): {_safe_json(critique)}"
+    if critique
+    else "")
+
+
     context = f"""
     VENDOR: {vendor.vendor_Code}, CBM_Max={cbm_max}
     DEST→CBM used: {_safe_json(dest_cbm)}
     CONTAINERS: {_safe_json(cont_df.to_dict(orient='records'))}
+    {critique_section}
     """
     return f"You are a planning analyst. Suggest ONE move based on the rules.\n\n{rules}\n\n{context}"
 
@@ -198,7 +211,8 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
     if df.empty:
         return OneMoveProposal(action="reduce", rationale="Empty plan", reduce=Reduce(cbm_goal=0.0))
 
-    prompt = build_planner_prompt(vendor, metrics, df)
+    critique = _get_latest_critique(plan)
+    prompt = build_planner_prompt(vendor, metrics, df, critique)
     try:
         client = OpenAI()
         raw = (client.chat.completions.create(
