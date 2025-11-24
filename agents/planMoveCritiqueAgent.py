@@ -6,11 +6,7 @@ from openai import OpenAI
 
 from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
-
-# ---- Result schema the graph can consume ----
-class CritiqueResult(BaseModel):
-    action: Literal["proceed", "revise"]               # what the graph should do next
-    reason: Optional[str] = Field(default="", max_length=1500)   
+from states.critiqueResult import CritiqueResult   
 
 
 
@@ -34,7 +30,7 @@ def planMoveCritiqueAgent(vendor: vendorState) -> vendorState:
     if not rationale or not isinstance(rationale, str):
         critique = CritiqueResult(
             action="revise",
-            reasons=["No rationale text found from plannerAgent to critique."],
+            reason=["No rationale text found from plannerAgent to critique."],
         )
         setattr(plan, "moveCritique", critique.model_dump())
         setattr(plan, "route", critique.action)

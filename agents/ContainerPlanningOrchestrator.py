@@ -44,6 +44,7 @@ def build_graph() -> StateGraph:
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
     graph.add_edge("containerPlanPrepAgent", "plannerAgent")
+    graph.add_edge("plannerAgent", "planMoveCritiqueAgent")
 
     graph.add_conditional_edges(
         "planMoveCritiqueAgent",

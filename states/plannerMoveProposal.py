@@ -4,7 +4,7 @@ import json, re
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from agents.planMoveCritiqueAgent import CritiqueResult
+from states.critiqueResult import CritiqueResult
 
 ActionType = Literal["reduce", "consolidate", "pad", "do_nothing"]
 
