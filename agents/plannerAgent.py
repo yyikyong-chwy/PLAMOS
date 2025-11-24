@@ -33,19 +33,16 @@ def apply_prompt_rules(vendor: vendorState):
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If there are more than one container that is less than {int(FULL_THRESHOLD*100)}% utilization, 
-            a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
-            b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
+        1. If there is only one container that is less than {int(FULL_THRESHOLD*100)}% utilization, and it is less than {int(VERY_LOW_UTIL*100)}%, propose REDUCE to remove it.
+        
+        2. If there is only one container that is less than {int(FULL_THRESHOLD*100)}% utilization, and it is more than {int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+        
+        3. If there is only one container that is less than {int(FULL_THRESHOLD*100)}% utilization, and it is more than {int(CLOSE_TO_FULL_MIN*100)}%, propose do_nothing.
+        
+        4. If there are more than one container that is less than {int(FULL_THRESHOLD*100)}% utilization, starting with the least utilized container, propose move as much as
+         possible from the least utilized container to the next least utilized container             
 
-        2. If all containers are full (≥{int(FULL_THRESHOLD*100)}%) and only one container is partial:
-            a) If the partial one ≥{int(CLOSE_TO_FULL_MIN*100)}%, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
-            b) If the partial one <{int(VERY_LOW_UTIL*100)}%, propose REDUCE to remove it.
-            c) Else, propose REDUCE with cbm_goal=0 (leave as is).
-
-        3. If >1 container partial (<{int(FULL_THRESHOLD*100)}%):
-            a) If two least utilized containers combined CBM ≤ CBM_Max={cbm_max}, CONSOLIDATE both fully (move everything from the lower-utilized into the other).
-            b) If combined > CBM_Max, CONSOLIDATE to fill one container (~{int(FULL_THRESHOLD*100)}%), choosing target DEST with this order:
-                - Default TNY1 first; but if the least-occupied container is also TNY1, then choose TLA1 **if such a partially filled container exists**, otherwise MDT1. Move only the CBM needed (cbm_move) to reach ~{int(FULL_THRESHOLD*100)}% on the chosen target.
+        5. if none of rule 1 to 4 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.CONSOLIDATE_ONLY:
         rule_prompt += f"""
@@ -112,7 +109,7 @@ def apply_prompt_rules(vendor: vendorState):
         ## OUTPUT & EXPLANATION REQUIREMENT
 
         - Provide **only** the JSON as specified below.
-        - **If you propose any consolidation(s)**, your **rationale must explicitly show the arithmetic** that proves feasibility against `CBM_Max`
+        - **If you propose any consolidation(s)**, your **rationale must explicitly state which rule is applied and why.**
         for **each** consolidation, using this pattern (containers, DESTs, numbers, and inequality):
         - Example: "The two least utilized containers (container 2 in MDT1 and container 5 in TLA1) can be consolidated as their combined CBM is less than CBM_Max (54.99 + 28.34 = 83.33 <= 64.0)."
         (Use the actual container IDs, DESTs, and CBM values from context.)
@@ -217,7 +214,7 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
 
         #debug
         print(data['rationale'])
-        print(pd.DataFrame(vendor.container_plans[0].metrics.total_cbm_used_by_container_dest))
+        print(pd.DataFrame(vendor.container_plans[-1].metrics.total_cbm_used_by_container_dest))
         print(pd.DataFrame(data))
 
 

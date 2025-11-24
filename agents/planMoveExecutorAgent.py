@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 from math import floor
 from collections import defaultdict
+import pandas as pd
 
 from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
@@ -111,7 +112,8 @@ def consolidate_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) 
         max_cases_possible = min(cases_src, max_cases_by_dst_cap)
 
         # Round down to MCP multiple
-        cases_to_move = (max_cases_possible // mcp) * mcp
+        #cases_to_move = (max_cases_possible // mcp) * mcp #this is a stupid bug!!!!!!!!!!
+        cases_to_move = max_cases_possible # it is already in cases! no need to round down to MCP multiple
         if cases_to_move <= 0:
             continue
 
@@ -481,6 +483,7 @@ def planMoveExecutorAgent(vendor: vendorState) -> vendorState:
     plan.container_plan_rows = [
         r for r in plan.container_plan_rows if int(r.cases_assigned or 0) > 0
     ]
+
 
     # (optional debug snapshots)
     # plan.to_df().to_csv("plan_after_move.csv", index=False)

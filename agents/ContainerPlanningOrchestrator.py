@@ -41,7 +41,6 @@ def build_graph() -> StateGraph:
     
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
-    graph.add_edge("planEvalAgent", "containerPlanPrepAgent")
     graph.add_edge("containerPlanPrepAgent", "plannerAgent")
     graph.add_edge("plannerAgent", "planMoveExecutorAgent")
     graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move

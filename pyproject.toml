@@ -13,6 +13,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pandas>=2.3.3",
     "pyarrow>=22.0.0",
+    "pyppeteer>=2.0.0",
     "snowflake>=1.8.0",
     "snowflake-connector-python[pandas,secure-local-storage]>=3.0.0",
     "streamlit>=1.50.0",

@@ -271,6 +271,11 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
     )
 
     vendor.container_plans[-1].metrics = latest_plan_metrics    
+
+    print("-------After Move-----------")
+    print(pd.DataFrame(latest_plan_metrics.total_cbm_used_by_container_dest))    
+    print("--------------------------------")
+
     return vendor
 
 def plan_eval_router(vendor: vendorState) -> str:
@@ -284,8 +289,11 @@ def plan_eval_router(vendor: vendorState) -> str:
 
     over_loop_limit = loop_counter > PLAN_EVAL_MAX_LOOPS
     is_last_strategy = plan.strategy == PlanStrategy.PAD_ONLY
+    is_first_strategy = plan.strategy == PlanStrategy.BASE_PLAN
 
-    if is_do_nothing_move and is_last_strategy:
+    if is_first_strategy:
+        return "next_plan"
+    elif is_do_nothing_move and is_last_strategy:
         return "end"
     elif over_loop_limit and not is_last_strategy:
         return "next_plan"
