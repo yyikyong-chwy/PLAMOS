@@ -43,7 +43,8 @@ def apply_prompt_rules(vendor: vendorState):
         2. if ALL containers have status FULL, propose do_nothing.
 
         3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, propose to consolidate them. 
-        Propose to move as much as possible from the least utilized container to the next least utilized container.             
+        Propose to move as much as possible from the least utilized container to the next least utilized container. 
+        If MDT is one of the containers, then propose to consolidate with other destinations.             
 
         4. if ALL but one containers have status FULL, and that single container is LOW_UTIL, propose REDUCE the former container to remove it.
         
@@ -69,6 +70,7 @@ def apply_prompt_rules(vendor: vendorState):
         1. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
+            c) if MDT is one of the containers, then propose to consolidate with other destinations.
 
         2. If all containers are FULL and only one container is NOT_QUITE_FULL:
             a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
@@ -185,17 +187,13 @@ def _get_latest_critique(plan: ContainerPlanState) -> Optional[dict]:
     critique = getattr(move, "moveCritique", None) if move else None
     return critique
 
-def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, critique: Optional[dict] = None) -> str:
+def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics) -> str:
     cbm_max = float(getattr(vendor, "CBM_Max", 66.0) or 66.0)
     cont_df = _containers_df(metrics)
     container_utilization_status_info_msg = metrics.container_utilization_status_info
 
     rules = apply_prompt_rules(vendor)
 
-    critique_section = (
-    f"\nCRITIQUE on last rationale (address and fix these issues): {_safe_json(critique)}"
-    if critique
-    else "")
 
 
     #taking out the containers df for now
@@ -203,7 +201,6 @@ def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics, cri
     context = f"""
     VENDOR: {vendor.vendor_Code}, CBM_Max={cbm_max}
     CONTAINER UTILIZATION STATUS: {container_utilization_status_info_msg}
-    {critique_section}
     """
     return f"You are a planning analyst. Suggest ONE move based on the rules.\n\n{rules}\n\n{context}"
 
@@ -215,9 +212,8 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
     plan: ContainerPlanState = vendor.container_plans[-1]
     #df = plan.to_df()
     metrics = plan.metrics
-
-    critique = _get_latest_critique(plan)
-    prompt = build_planner_prompt(vendor, metrics, critique)
+    
+    prompt = build_planner_prompt(vendor, metrics)
     try:
         client = OpenAI()
         raw = (client.chat.completions.create(

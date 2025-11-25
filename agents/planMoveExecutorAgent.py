@@ -274,33 +274,32 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
 
 
 # ---------------------------- move: PAD ---------------------------- #
-
 def pad_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> None:
     """
-    Increase order to hit cbm_goal by padding high-runrate SKUs that do NOT have excess_demand.
-    If none exist, fall back to all SKUs (still prioritize higher T90_DAILY_AVG).
-    - Assigns pads into the specified container.
-    - Respects MCP multiples.
-    - Two-pass strategy: floor-fill first (no overshoot), then minimally overshoot with one SKU if needed.
+    Pad a specific underutilized container up to CBM_Max (never exceed).
+    Candidate SKUs come from vendor.ChewySkuState, prioritizing:
+      1) SKUs with no excess_demand (<= 0); fallback to all SKUs
+      2) Sort by t90*mcp*cbm_case (desc)
+    Enhancement: distribute remaining_cbm across TOP-3 candidates (weighted), not greedy.
+    Respects MCP multiples and updates/creates rows in the target container.
     """
-    # ---- extract inputs ----
-    cbm_goal = float(_safe_get(move, "pad.cbm_goal", 0.0) or 0.0)
-    if cbm_goal <= 0.0:
+    # --- identify target container & capacity context ---
+    CBM_Max: float = float(getattr(vendor, "CBM_Max", 66.0))
+    dst_cid = _safe_get(move, "pad.container", None) or _safe_get(move, "pad.to_container", None)
+    if dst_cid is None:
         return
+    dst_cid = int(dst_cid)
 
-    dst_cid = _safe_get(move, "pad.container", None)
-    if dst_cid is None:
-        dst_cid = _safe_get(move, "pad.to_container", None)
-    if dst_cid is None:
-        return  # malformed: no target container
-
-    dst_dest = _dest_for_container(plan, int(dst_cid))
+    dst_dest = _dest_for_container(plan, dst_cid)
     if dst_dest is None:
-        # If the plan has no rows for this container yet, we cannot infer DEST.
-        # You can set a default or abort. We'll abort for safety.
         return
 
-    # ---- helpers ----
+    current_cbm = _cbm_in_container(plan, dst_cid)
+    remaining_cbm = max(0.0, CBM_Max - current_cbm)
+    if remaining_cbm <= 1e-9:
+        return
+
+    # --- small helpers (local) ---
     from collections import defaultdict
     rows_by_sku: Dict[str, List[ContainerPlanRow]] = defaultdict(list)
     for r in plan.container_plan_rows:
@@ -311,63 +310,46 @@ def pad_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> None:
         return lst[0] if lst else None
 
     def _ensure_row_for_sku_in_container(sku: str, cbm_per_case: float, mcp: int) -> ContainerPlanRow:
-        """
-        Ensure there's a row for (sku, dst_cid). Prefer cloning an existing row (proto) for the SKU.
-        If none exist in the plan, synthesize one from ChewySkuState.
-        """
-        # 1) If there's already a row in target container, return it
+        # Reuse existing row if already present in target container
         for r in plan.container_plan_rows:
             if r.container == dst_cid and str(r.product_part_number) == sku:
-                # Ensure DEST consistency
                 if getattr(r, "DEST", None) != dst_dest:
                     setattr(r, "DEST", dst_dest)
                 return r
 
-        # 2) If there is any row for this SKU elsewhere, clone its shape as proto
+        # If SKU exists elsewhere in the plan, clone its shape for the target container
         proto = _any_row_for_sku(sku)
         if proto is not None:
             return _get_or_create_dst_row(plan, proto, dst_cid, dst_dest)
 
-        # 3) Build from ChewySkuState (minimal fields)
-        #    We keep it resilient to extra/unknown fields by using model_validate.
-        sku_state = None
-        for s in getattr(vendor, "ChewySku_info", []) or []:
-            if str(getattr(s, "product_part_number", "")) == sku:
-                sku_state = s
-                break
-
-        base = {}
-        if sku_state is not None:
-            base = {
-                "product_part_number": sku,
-                "master_case_pack": int(getattr(sku_state, "MCP", mcp) or mcp or 1),
-                "case_pk_CBM": float(getattr(sku_state, "case_pk_CBM", cbm_per_case) or cbm_per_case or 0.0),
-                "vendor_Code": getattr(vendor, "vendor_Code", None),
-                "product_name": getattr(sku_state, "product_name", None),
-            }
-        else:
-            base = {
-                "product_part_number": sku,
-                "master_case_pack": int(mcp or 1),
-                "case_pk_CBM": float(cbm_per_case or 0.0),
-                "vendor_Code": getattr(vendor, "vendor_Code", None),
-            }
-
-        base.update({
-            "container": int(dst_cid),
+        # Otherwise build a minimal, valid new row
+        vcode = getattr(vendor, "vendor_Code", None)
+        vname = getattr(vendor, "vendor_name", None)
+        if vname is None:
+            for rr in plan.container_plan_rows:
+                if getattr(rr, "vendor_name", None):
+                    vname = rr.vendor_name
+                    break
+        payload = {
+            "vendor_Code": vcode,
+            "vendor_name": vname,
             "DEST": dst_dest,
+            "container": dst_cid,
+            "product_part_number": sku,
+            "master_case_pack": int(mcp or 1),
+            "case_pk_CBM": float(cbm_per_case or 0.0),
+            "cases_needed": 0,
             "cases_assigned": 0,
             "cbm_assigned": 0.0,
-        })
-        new_r = ContainerPlanRow.model_validate(base)
+        }
+        new_r = ContainerPlanRow.model_validate(payload)
         plan.container_plan_rows.append(new_r)
         rows_by_sku[sku].append(new_r)
         return new_r
 
-    # ---- build candidate SKU list (prefer no-excess, high run rate) ----
+    # --- build and sort candidate pool ---
     no_excess: List[Dict] = []
     all_skus: List[Dict] = []
-
     for s in getattr(vendor, "ChewySku_info", []) or []:
         try:
             sku = str(s.product_part_number)
@@ -377,79 +359,77 @@ def pad_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> None:
             excess = float(s.excess_demand or 0.0)
         except Exception:
             continue
-
         if mcp <= 0 or cbm_case <= 0.0:
             continue
-
         rec = {"sku": sku, "t90": t90, "mcp": mcp, "cbm_case": cbm_case}
         all_skus.append(rec)
         if excess <= 0.0:
             no_excess.append(rec)
 
-    # Priority pool: SKUs without excess first; if none, use all
     pool = no_excess if no_excess else all_skus
-
-    # Sort: higher run rate first; then prefer smaller MCP (finer granularity); then larger cbm/case
-    pool.sort(key=lambda x: (-x["t90"], x["mcp"], -x["cbm_case"]))
-
+    # Expand if too small or weak runrates
+    if len(pool) < 10 or all(x["t90"] < 10 for x in pool):
+        pool = all_skus
     if not pool:
         return
 
-    # ---- PASS 1: floor-fill without overshoot ----
-    cbm_added = 0.0
-    goal_left = cbm_goal
+    # Sort by product score (desc): fast movers / bigger volume / larger cbm
+    def score(x: Dict) -> float:
+        return float(x["t90"]) * float(x["mcp"]) * float(x["cbm_case"])
+    pool.sort(key=lambda x: -score(x))
 
-    for c in pool:
-        if goal_left <= 1e-9:
+    # ---- NEW: distribute across TOP-N (N=3) candidates by weight ----
+    TOP_N = min(3, len(pool))
+    top = pool[:TOP_N]
+
+    # Weights from the same score used for ranking (avoid zero-division)
+    weights = [max(1e-9, score(c)) for c in top]
+    total_w = sum(weights)
+    cbm_left = remaining_cbm
+
+    # 1st pass: proportional allocation by weight, snapped to MCP multiples
+    for i, c in enumerate(top):
+        if cbm_left <= 0.1:
             break
         sku, mcp, cbm_case = c["sku"], int(c["mcp"]), float(c["cbm_case"])
+        w = weights[i] / total_w
+        target_cbm = cbm_left * w
 
-        # how many cases can we add without exceeding the remaining goal?
-        max_cases_by_goal = int(goal_left // cbm_case)  # floor
-        cases_to_add = (max_cases_by_goal // mcp) * mcp
+        # Max cases by per-sku target and remaining capacity (conservative)
+        max_cases_by_target = int(target_cbm // cbm_case)
+        max_cases_by_cap    = int(cbm_left   // cbm_case)
+        max_cases = max(0, min(max_cases_by_target, max_cases_by_cap))
+
+        # Snap to MCP multiple
+        cases_to_add = (max_cases // mcp) * mcp
         if cases_to_add <= 0:
             continue
 
         drow = _ensure_row_for_sku_in_container(sku, cbm_case, mcp)
-        drow.cases_assigned = int(drow.cases_assigned or 0) + cases_to_add
-        drow.cbm_assigned   = float(drow.cases_assigned) * float(drow.case_pk_CBM or cbm_case)
+        drow.cases_assigned = int(drow.cases_assigned or 0) + int(cases_to_add)
+        drow.cbm_assigned = float(drow.cases_assigned) * float(drow.case_pk_CBM or cbm_case)
 
-        delta = cases_to_add * cbm_case
-        cbm_added += delta
-        goal_left  = max(0.0, cbm_goal - cbm_added)
+        cbm_added = cases_to_add * cbm_case
+        cbm_left = max(0.0, cbm_left - cbm_added)
 
-    # ---- PASS 2: minimal overshoot if still short ----
-    if goal_left > 1e-9:
-        # choose the SKU with smallest "step" needed to clear the remainder:
-        # compute cases_needed rounded up to MCP multiples; pick the SKU that yields the minimal CBM overshoot
-        best_choice = None
-        best_over = None
-
-        for c in pool:
+    # 2nd pass (optional): round-robin fill leftover among top-N (one MCP chunk at a time)
+    # This squeezes remaining capacity that couldn't be allocated due to rounding in pass 1.
+    made_progress = True
+    while cbm_left >= 1e-6 and made_progress:
+        made_progress = False
+        for c in top:
+            if cbm_left < 1e-6:
+                break
             sku, mcp, cbm_case = c["sku"], int(c["mcp"]), float(c["cbm_case"])
-            if cbm_case <= 0.0 or mcp <= 0:
-                continue
-            cases_needed = int(-(-goal_left // cbm_case))  # ceil(goal_left / cbm_case)
-            # round UP to MCP multiple
-            rounded = ((cases_needed + mcp - 1) // mcp) * mcp
-            added_cbm = rounded * cbm_case
-            overshoot = added_cbm - goal_left
-            # track the smallest overshoot; tie-break by higher run rate then smaller MCP
-            key = (overshoot, -c["t90"], c["mcp"])
-            if best_over is None or key < best_over:
-                best_over = key
-                best_choice = (c, rounded, added_cbm)
 
-        if best_choice is not None:
-            c, cases_to_add, added_cbm = best_choice
-            sku, mcp, cbm_case = c["sku"], int(c["mcp"]), float(c["cbm_case"])
-            drow = _ensure_row_for_sku_in_container(sku, cbm_case, mcp)
-            drow.cases_assigned = int(drow.cases_assigned or 0) + int(cases_to_add)
-            drow.cbm_assigned   = float(drow.cases_assigned) * float(drow.case_pk_CBM or cbm_case)
-            cbm_added += added_cbm
-            goal_left  = max(0.0, cbm_goal - cbm_added)
-    # done
-
+            # At least one MCP chunk must fit
+            mcp_chunk_cbm = mcp * cbm_case
+            if mcp_chunk_cbm <= cbm_left + 1e-9:
+                drow = _ensure_row_for_sku_in_container(sku, cbm_case, mcp)
+                drow.cases_assigned = int(drow.cases_assigned or 0) + mcp
+                drow.cbm_assigned = float(drow.cases_assigned) * float(drow.case_pk_CBM or cbm_case)
+                cbm_left = max(0.0, cbm_left - mcp_chunk_cbm)
+                made_progress = True
 
 
 # ---------------------------- main entrypoint ---------------------------- #

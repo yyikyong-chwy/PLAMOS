@@ -12,11 +12,16 @@ class PlanStrategy(str, Enum):
 
 
 # Explicit order (don’t rely on Enum definition order implicitly)
+# _STRATEGY_ORDER = [
+#     PlanStrategy.BASE_PLAN,
+#     PlanStrategy.CONSOLIDATE_REDUCE,
+#     PlanStrategy.CONSOLIDATE_ONLY,
+#     PlanStrategy.CONSOLIDATE_AND_PAD,
+#     PlanStrategy.PAD_ONLY,
+# ]
+
 _STRATEGY_ORDER = [
     PlanStrategy.BASE_PLAN,
-    PlanStrategy.CONSOLIDATE_REDUCE,
-    PlanStrategy.CONSOLIDATE_ONLY,
-    PlanStrategy.CONSOLIDATE_AND_PAD,
     PlanStrategy.PAD_ONLY,
 ]
 
