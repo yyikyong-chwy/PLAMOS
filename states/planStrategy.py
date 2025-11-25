@@ -20,11 +20,6 @@ _STRATEGY_ORDER = [
     PlanStrategy.PAD_ONLY,
 ]
 
-_STRATEGY_ORDER = [
-    PlanStrategy.BASE_PLAN,
-    PlanStrategy.CONSOLIDATE_REDUCE,
-]
-
 
 def next_strategy(curr: PlanStrategy | str) -> PlanStrategy:
     """Return the next PlanStrategy (wraps around at the end)."""

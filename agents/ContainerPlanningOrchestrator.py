@@ -25,6 +25,9 @@ import data.sql_lite_store as sql_lite_store
 import states.state_loader as state_loader
 
 
+#data storage
+import data.vendor_state_store as vendor_state_store
+
 def compile_app():
     graph = build_graph()
     memory = MemorySaver()        
@@ -98,8 +101,11 @@ if __name__ == "__main__":
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
 
+        if(current_vendor_state.vendor_Code != "B3755"):
+            continue
+
         config = {"configurable": {"thread_id": "test_session"},
-         "recursion_limit": 80,  }
+         "recursion_limit": 500,  }
         app = compile_app()
 
         app.get_graph().draw_mermaid_png(
@@ -116,6 +122,8 @@ if __name__ == "__main__":
         print("Base Score: ", current_vendor_state.container_plans[0].metrics.ape_vs_base)
         print("number of containers: ", current_vendor_state.container_plans[0].metrics.containers)
         print("\n\n")
+
+        vendor_state_store.save_vendor_state_blob(".", current_vendor_state)
 
     
         

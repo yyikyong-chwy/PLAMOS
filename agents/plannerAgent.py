@@ -42,15 +42,17 @@ def apply_prompt_rules(vendor: vendorState):
 
         2. if ALL containers have status FULL, propose do_nothing.
 
-        3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, propose to consolidate them. 
+        3. If there are more than one container that has status PARTIAL_UTIL or LOW_UTIL, propose to consolidate them. 
         Propose to move as much as possible from the least utilized container to the next least utilized container. 
         If MDT is one of the containers, then propose to consolidate with other destinations.             
 
-        4. if ALL but one containers have status FULL, and that single container is LOW_UTIL, propose REDUCE the former container to remove it.
+        4. if ALL but one containers have status FULL, and that single container has status LOW_UTIL, propose REDUCE the former container to remove it.
+
+        5. if ALL but one containers have status FULL, and that single container has status PARTIAL_UTIL, propose do_nothing.
         
-        5. if ALL but one containers have status FULL, and that single container is NOT_QUITE_FULL, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+        6. if ALL but one containers have status FULL, and that single container has status NOT_QUITE_FULL, propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
                         
-        6. if none of rule 1 to 5 applies, propose do_nothing.
+        7. if none of rule 1 to 6 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.CONSOLIDATE_ONLY:
         rule_prompt += f"""
