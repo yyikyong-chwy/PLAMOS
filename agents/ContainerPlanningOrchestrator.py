@@ -92,8 +92,7 @@ def generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_
 
 if __name__ == "__main__":
     df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()
-    vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)
-    
+    vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
 
     #iterate through the vendor_state_list and print the vendor_Code and vendor_name
     for current_vendor_state in vendor_state_list:

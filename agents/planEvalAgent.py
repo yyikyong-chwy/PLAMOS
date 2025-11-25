@@ -11,7 +11,7 @@ import numpy as np
 from states.ContainerRow import ContainerPlanRow  # :contentReference[oaicite:5]{index=5}
 from states.vendorState import vendorState                 # :contentReference[oaicite:7]{index=7}
 from states.containerPlanState import ContainerPlanMetrics
-from states.planStrategy import PlanStrategy
+from states.planStrategy import PlanStrategy, _STRATEGY_ORDER
 
 FULL_THRESHOLD = 0.95
 ALMOST_FULL_MIN = 0.70
@@ -366,7 +366,7 @@ def plan_eval_router(vendor: vendorState) -> str:
     loop_counter = getattr(plan, "plan_loop_counter", 1) or 1
 
     over_loop_limit = loop_counter > PLAN_EVAL_MAX_LOOPS
-    is_last_strategy = plan.strategy == PlanStrategy.PAD_ONLY
+    is_last_strategy = (plan.strategy == _STRATEGY_ORDER[-1])
     is_first_strategy = plan.strategy == PlanStrategy.BASE_PLAN
 
     if is_first_strategy:

@@ -9,6 +9,8 @@ from states.critiqueResult import CritiqueResult
 ActionType = Literal["reduce", "consolidate", "pad", "do_nothing"]
 
 class Reduce(BaseModel):
+    dest: str
+    container: int
     cbm_goal: float
 
 class Consolidate(BaseModel):

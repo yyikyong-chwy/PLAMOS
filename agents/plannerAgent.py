@@ -129,7 +129,7 @@ def apply_prompt_rules(vendor: vendorState):
         {{
         "action": "reduce" | "consolidate" | "pad" | "do_nothing",
         "rationale": "string",
-        "reduce": {{"cbm_goal": 0.0}} | null,
+        "reduce": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null,
         "consolidate": {{"from_dest": "", "from_container": 0, "to_dest": "", "to_container": 0, }} | null,
         "pad": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null,
         "do_nothing": null

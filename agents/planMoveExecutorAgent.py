@@ -149,9 +149,10 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
       Tier 1: Reduce up to excess_demand, prioritizing low F90_DAILY_AVG SKUs.
       Tier 2: If cbm_goal remains, reduce further but never below baseDemand.
     """
-    cbm_goal = float(_safe_get(move, "reduce.cbm_goal", 0.0) or 0.0)
-    if cbm_goal <= 0.0:
-        return
+    #this is useless since llm tends to hallucinate the cbm_goal
+    #cbm_goal = float(_safe_get(move, "reduce.cbm_goal", 0.0) or 0.0)    
+    container = int(_safe_get(move, "reduce.container", 0) or 0)
+    cbm_goal = _cbm_in_container(plan, container)
 
     plan_rows: List[ContainerPlanRow] = plan.container_plan_rows
     if not plan_rows:
@@ -191,7 +192,7 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
     candidates_t1.sort(key=lambda x: x["f90"])
 
     for c in candidates_t1:
-        if goal_left <= 1e-9:
+        if goal_left <= 0.01:
             break
 
         sku = c["sku"]
@@ -200,7 +201,7 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
         rows = sorted(rows_by_sku[sku], key=lambda r: float(r.case_pk_CBM or 0.0), reverse=True)
 
         for row in rows:
-            if goal_left <= 1e-9 or removable_cases <= 0:
+            if goal_left <= 0.01 or removable_cases <= 0:
                 break
             cases_to_remove = min(removable_cases, int(row.cases_assigned or 0))
             cbm_delta = cases_to_remove * cbm_case
@@ -218,7 +219,7 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
             removable_cases -= cases_to_remove
 
     # --- Tier 2: Reduce but not below baseDemand ---
-    if goal_left > 1e-9:
+    if goal_left > 0.01:
         candidates_t2 = []
         for s in getattr(vendor, "ChewySku_info", []):
             sku = str(s.product_part_number)
@@ -267,6 +268,26 @@ def reduce_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> No
                 goal_left = cbm_goal - cbm_removed
                 removable_cases -= cases_to_remove
 
+     # --- Tier 3: Reduce proportionally from remaining SKUs until goal met ---
+    if goal_left > 0.01:
+        all_rows = [r for r in plan_rows if (r.cbm_assigned or 0.0) > 0]
+        total_cbm_now = sum(float(r.cbm_assigned or 0.0) for r in all_rows)
+        if total_cbm_now > 0:
+            reduction_ratio = min(1.0, goal_left / total_cbm_now)
+            for r in all_rows:
+                cbm_to_remove = float(r.cbm_assigned or 0.0) * reduction_ratio
+                cbm_case = float(r.case_pk_CBM or 0.0)
+                if cbm_case <= 0:
+                    continue
+                cases_to_remove = int(cbm_to_remove // cbm_case)
+                if cases_to_remove <= 0:
+                    continue
+                r.cases_assigned = max(0, int(r.cases_assigned or 0) - cases_to_remove)
+                r.cbm_assigned = r.cases_assigned * cbm_case
+                cbm_removed += cbm_case * cases_to_remove
+                goal_left = max(0.0, cbm_goal - cbm_removed)
+                if goal_left <= 0.01:
+                    break
     # Done – goal achieved or exhausted feasible removals
     return
 
