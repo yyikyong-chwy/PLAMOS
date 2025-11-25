@@ -69,15 +69,19 @@ def apply_prompt_rules(vendor: vendorState):
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
+        1. Never propose anything on a container that has status FULL.
+
+        2. if ALL containers have status FULL, propose do_nothing.
+
+        3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
             c) if MDT is one of the containers, then propose to consolidate with other destinations.
 
-        2. If all containers are FULL and only one container is NOT_QUITE_FULL:
+        4. If all containers are FULL and only one container is NOT_QUITE_FULL:
             a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
 
-        3. if none of rule 1 to 2 applies, propose do_nothing.
+        5. if none of rule 1 to 4 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.CONSOLIDATE_AND_PAD:
         rule_prompt += f"""
@@ -94,14 +98,18 @@ def apply_prompt_rules(vendor: vendorState):
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
+        1. Never propose anything on a container that has status FULL.
+
+        2. if ALL containers have status FULL, propose do_nothing.
+
+        3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
 
-        2. If all containers are FULL and **only** one container is not status FULL:
+        4. If all containers are FULL and **only** one container is not status FULL:
             a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
 
-        3. if none of rule 1 to 2 applies, propose do_nothing.
+        5. if none of rule 1 to 4 applies, propose do_nothing.
         """
     elif startegy == PlanStrategy.PAD_ONLY:
         rule_prompt += f"""
@@ -111,9 +119,12 @@ def apply_prompt_rules(vendor: vendorState):
         - pad: add CBM goal to a specific container.
 
         Decision:
-        1. If any container is not statusFULL, propose PAD one of them randomlyto reach ~{int(FULL_THRESHOLD*100)}%.
+        1. Never propose anything on a container that has status FULL.
 
-        2. If no container is not status FULL, propose do_nothing.
+        2. if ALL containers have status FULL, propose do_nothing.
+
+        3. If any container is not status FULL, propose PAD one of them randomlyto reach ~{int(FULL_THRESHOLD*100)}%.
+
         """
 
 
@@ -231,6 +242,7 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
 
         #debug
         print(vendor.vendor_Code)
+        print(plan.strategy)
         print(data['rationale'])
         print(pd.DataFrame(vendor.container_plans[-1].metrics.total_cbm_used_by_container_dest))
         print(pd.DataFrame(data))

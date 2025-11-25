@@ -101,8 +101,6 @@ if __name__ == "__main__":
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
 
-        if(current_vendor_state.vendor_Code != "B3755"):
-            continue
 
         config = {"configurable": {"thread_id": "test_session"},
          "recursion_limit": 500,  }

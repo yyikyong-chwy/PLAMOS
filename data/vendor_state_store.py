@@ -17,7 +17,7 @@ def save_vendor_state_blob(
     Returns paths written.
     """
     vc = _get(vendor_state, "vendor_Code", "unknown")
-    vendor_dir = os.path.join(base_dir, "data", str(vc))
+    vendor_dir = os.path.join(base_dir, "data/vendor_plans", str(vc))
     os.makedirs(vendor_dir, exist_ok=True)
 
     # file names
@@ -30,8 +30,6 @@ def save_vendor_state_blob(
     payload = _to_jsonable(vendor_state)
 
     _atomic_dump(payload, latest_path, gzip_compress=gzip_compress)
-    if versioned and snap_path:
-        _atomic_dump(payload, snap_path, gzip_compress=gzip_compress)
 
     return {"latest": latest_path, "snapshot": snap_path}
 
