@@ -27,6 +27,10 @@ class ContainerPlanMetrics(BaseModel):
     # e.g. {"1": 8.4, "2": 0.0} or {1: 8.4, 2: 0.0}
     total_excess_in_cbm_by_container: Dict[Union[str, int], float] = Field(default_factory=dict)
 
+    # Demand Met tracking by SKU (in eaches, summed across all locations)
+    # Each dict contains: product_part_number, original_demand, assigned_demand, delta
+    demand_met_by_sku: List[Dict[str, Union[str, float]]] = Field(default_factory=list)
+
     # final score (0–100)
     overall_score: float = 0.0
 

@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import Dict, List, Tuple, Any, TypedDict
+from typing import Dict, List, Tuple, Any, TypedDict, Union
 from collections import defaultdict
 import pandas as pd
 import numpy as np
@@ -27,7 +27,7 @@ def _clamp01(x: float) -> float:
 
 def _sku_cases_map(vendor: vendorState) -> Dict[str, Dict[str, float]]:
     """
-    Build a mapping for each SKU -> {MCP, planned_cases, base_cases, excess_cases}
+    Build a mapping for each SKU -> {MCP, planned_cases, base_cases, excess_cases, planned_demand_eaches, base_demand_eaches, excess_demand_eaches}
     All demand fields are assumed to be *eaches* in ChewySkuState; convert to cases via MCP.
     Missing MCP or zero MCP -> skip those SKUs from alignment scoring.
     """
@@ -44,6 +44,9 @@ def _sku_cases_map(vendor: vendorState) -> Dict[str, Dict[str, float]]:
             "planned_cases": to_cases(s.planned_demand),
             "base_cases":    to_cases(s.baseDemand),
             "excess_cases":  to_cases(s.excess_demand),
+            "planned_demand_eaches": float(s.planned_demand) if s.planned_demand is not None else 0.0,
+            "base_demand_eaches": float(s.baseDemand) if s.baseDemand is not None else 0.0,
+            "excess_demand_eaches": float(s.excess_demand) if s.excess_demand is not None else 0.0,
         }
     return out
 
@@ -236,7 +239,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
     final_cases = final_cases_by_sku.reindex(combined_index).fillna(0.0)
 
     # Make sure target columns exist even if sku_map was empty
-    for col in ("planned_cases", "base_cases", "excess_cases"):
+    for col in ("planned_cases", "base_cases", "excess_cases", "planned_demand_eaches", "base_demand_eaches", "excess_demand_eaches", "MCP"):
         if col not in target_df.columns:
             target_df[col] = np.nan
     target_df = target_df.reindex(combined_index)
@@ -330,6 +333,43 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         by_container = rows.groupby("container")["row_excess_cbm"].sum().fillna(0.0)
         total_excess_in_cbm_by_container = {k: float(v) for k, v in by_container.to_dict().items()}
 
+    # --- DemandMet tracking by SKU ---
+    demand_met_by_sku_list: List[Dict[str, Union[str, float]]] = []
+    
+    # Get all SKUs from both original demand (target_df) and assigned (final_cases)
+    all_skus = final_cases.index.union(target_df.index)
+    
+    for sku in all_skus:
+        sku_str = str(sku)
+        
+        # Get MCP for this SKU
+        mcp = 1.0
+        if sku in target_df.index and "MCP" in target_df.columns:
+            mcp_val = target_df.loc[sku, "MCP"]
+            mcp = float(mcp_val) if pd.notna(mcp_val) and mcp_val > 0 else 1.0
+        
+        # Original demand in eaches (at virtual factory level, summed across all locations)
+        original_demand = 0.0
+        if sku in target_df.index and "planned_demand_eaches" in target_df.columns:
+            planned_val = target_df.loc[sku, "planned_demand_eaches"]
+            original_demand = float(planned_val) if pd.notna(planned_val) else 0.0
+        
+        # Assigned demand in eaches (from container plan, summed across all DEST/containers)
+        assigned_demand = 0.0
+        if sku in final_cases.index:
+            cases_assigned_total = float(final_cases.loc[sku])
+            assigned_demand = cases_assigned_total * mcp
+        
+        # Calculate delta
+        delta = assigned_demand - original_demand
+        
+        demand_met_by_sku_list.append({
+            "product_part_number": sku_str,
+            "original_demand": original_demand,
+            "assigned_demand": assigned_demand,
+            "delta": delta,
+        })
+
     # Write metrics back to the plan
     latest_plan_metrics = ContainerPlanMetrics(
         containers=int(containers),
@@ -346,12 +386,23 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         total_cbm_used_by_container_dest=total_cbm_used_by_container_dest,
         total_excess_in_cbm_by_container=total_excess_in_cbm_by_container,
         container_utilization_status_info=container_utilization_status_info,
+        demand_met_by_sku=demand_met_by_sku_list,
     )
 
     vendor.container_plans[-1].metrics = latest_plan_metrics    
 
     print("-------After Move-----------")
     print(pd.DataFrame(latest_plan_metrics.total_cbm_used_by_container_dest))    
+    print("--------------------------------")
+    
+    print("-------Demand Met by SKU (in eaches)-----------")
+    if demand_met_by_sku_list:
+        demand_df = pd.DataFrame(demand_met_by_sku_list)
+        # Sort by delta to show biggest differences first
+        demand_df = demand_df.sort_values(by="delta", ascending=False)
+        print(demand_df.to_string(index=False))
+    else:
+        print("No SKU demand data available")
     print("--------------------------------")
 
     return vendor
