@@ -58,7 +58,7 @@ def process_demand_data() -> pd.DataFrame:
 
     df_demand = df_demand.merge(
         df_vendor_cbm,
-        how='left',
+        how='outer',
         on=['CHW_SKU_NUMBER'])
 
     #combine the 2 tables,
@@ -70,10 +70,17 @@ def process_demand_data() -> pd.DataFrame:
 
     df_sku_data = df_demand.merge(
         df_skuSupplySnapshot,
-        how='left',
+        how='outer',
         left_on='CHW_SKU_NUMBER',
         right_on='SKU'
     )
+
+    # df_sku_data = df_sku_data.merge(
+    #     df_skuSupplySnapshot,
+    #     how='left',
+    #     left_on='CHW_SKU_NUMBER',
+    #     right_on='SKU'
+    # )
 
     # Drop requested columns (only if present)
     avg_lt_mean = df_sku_data['AVG_LT'].mean(skipna=True)
@@ -118,19 +125,47 @@ def process_demand_data() -> pd.DataFrame:
     df_sku_data["baseDemand"] = np.ceil(df_sku_data["baseDemand"] / m) * m
     df_sku_data["excess_demand"] = np.floor(df_sku_data["excess_demand"] / m) * m
 
+    #taking out suppliers that have no demand
+    suppliers_with_demand = (
+        df_sku_data.loc[df_sku_data["Planned_Demand"].notna(), "CHW_PRIMARY_SUPPLIER_NUMBER"]
+        .dropna()
+        .unique()
+    )
+
+    df_sku_data = df_sku_data[
+        df_sku_data["CHW_PRIMARY_SUPPLIER_NUMBER"].isin(suppliers_with_demand)
+    ]
+
+    #defaulting columns to 0 if they are null
+    cols_to_fill_zero = ["Planned_Demand","CHW_MOQ_LEVEL", "OH", "OO", "T90_DAILY_AVG", "F90_DAILY_AVG", 
+    "T90_DOS_OH", "F90_DOS_OH", "F90_DOS_OO", "T90_BELOW", "F90_BELOW", "baseConsumption",
+    "bufferConsumption", "baseDemand", "bufferDemand", "excess_demand"]
+    df_sku_data[cols_to_fill_zero] = df_sku_data[cols_to_fill_zero].fillna(0)
+
     return df_sku_data
 
+import numpy as np
+import pandas as pd
 
 def split_base_demand_by_dest(df_sku_data: pd.DataFrame,
                               df_kepplerSplits: pd.DataFrame) -> pd.DataFrame:
     """
-    Merge df_sku_data with df_kepplerSplits on CHW_SKU_NUMBER == ITEM_ID (or item_id),
-    then split baseDemand into TLA1/TNY1/MDT1 using *_FRAC.
+    Merge df_sku_data with df_kepplerSplits on CHW_SKU_NUMBER == ITEM_ID,
+    then split Planned_Demand into TLA1/TNY1/MDT1 using *_FRAC.
+
     If no match in df_kepplerSplits, assign all demand to TNY1 and 0 to the others.
 
-    Output: long dataframe with a DEST column and baseDemand_dest (per-destination).
+    Then:
+      - Compute per-destination demand (Planned_Demand_dest)
+      - Convert to cases using CHW_MASTER_CASE_PACK
+      - If Planned_Demand is an exact multiple of MCP for a SKU, ensure that
+        the sum of cases across DEST equals Planned_Demand / MCP (no inflation),
+        using a largest-remainder allocation.
+
+    Output: long dataframe with DEST, Planned_Demand_dest, and Planned_Demand_cases_need.
     """
-    columns_to_keep = ['ITEM_ID', 'TLA1_FRAC', 'TNY1_FRAC', 'MDT1_FRAC']  # specify which columns you want
+    # --- keep only needed columns from splits ---
+    columns_to_keep = ['ITEM_ID', 'TLA1_FRAC', 'TNY1_FRAC', 'MDT1_FRAC']
     df_splits = df_kepplerSplits[columns_to_keep]
 
     # --- left join on SKU ---
@@ -141,7 +176,6 @@ def split_base_demand_by_dest(df_sku_data: pd.DataFrame,
         right_on="ITEM_ID",
         suffixes=("", "_split")
     )
-
 
     # --- default fractions when no match: all to TNY1 ---
     for col in ["TLA1_FRAC", "TNY1_FRAC", "MDT1_FRAC"]:
@@ -156,9 +190,10 @@ def split_base_demand_by_dest(df_sku_data: pd.DataFrame,
     merged.loc[no_match, ["TLA1_FRAC", "MDT1_FRAC"]] = 0.0
     merged.loc[no_match, "TNY1_FRAC"] = 1.0
 
-    # Also fill any remaining NaNs (e.g., partial data quality) with 0
-    merged[["TLA1_FRAC", "TNY1_FRAC", "MDT1_FRAC"]] = \
+    # Fill any remaining NaNs with 0
+    merged[["TLA1_FRAC", "TNY1_FRAC", "MDT1_FRAC"]] = (
         merged[["TLA1_FRAC", "TNY1_FRAC", "MDT1_FRAC"]].fillna(0.0)
+    )
 
     # --- long form: DEST + frac ---
     long = merged.melt(
@@ -170,22 +205,74 @@ def split_base_demand_by_dest(df_sku_data: pd.DataFrame,
     long["DEST"] = long["DEST"].str.replace("_FRAC", "", regex=False)
 
     # --- compute split demand ---
-    long["Planned_Demand"] = long["Planned_Demand"].fillna(0.0).astype(float)
+    long["Planned_Demand"] = pd.to_numeric(long["Planned_Demand"], errors="coerce").fillna(0.0)
     long["Planned_Demand_dest"] = long["Planned_Demand"] * long["frac"]
 
-    #snapping baseDemand_dest to MCP
-    mcp = pd.to_numeric(long["CHW_MASTER_CASE_PACK"], errors="coerce")
-    demand_units = pd.to_numeric(long["Planned_Demand_dest"], errors="coerce").fillna(0)
+    # --- prepare for MCP snapping with "no inflation when divisible" logic ---
+    long["CHW_MASTER_CASE_PACK"] = pd.to_numeric(long["CHW_MASTER_CASE_PACK"], errors="coerce")
+    long["Planned_Demand_dest"] = pd.to_numeric(long["Planned_Demand_dest"], errors="coerce").fillna(0)
 
-    # Avoid division by zero
-    safe_mcp = mcp.replace(0, np.nan)
-    cases = (demand_units / safe_mcp).round()          # nearest integer #cases
-    cases = cases.fillna(0).clip(lower=0).astype("Int64")
-    long["Planned_Demand_cases_need"] = cases
+    def _allocate_cases_per_sku(group: pd.DataFrame) -> pd.DataFrame:
+        """
+        For a single SKU (CHW_SKU_NUMBER group):
+          - If Planned_Demand is an exact multiple of MCP, keep total cases fixed.
+          - Otherwise, ceil per-dest cases independently.
+        """
+        # Take MCP and total demand for this SKU (assumed constant within group)
+        mcp = group["CHW_MASTER_CASE_PACK"].iloc[0]
+        total_planned = group["Planned_Demand"].iloc[0]
 
+        # Fallback: no MCP or no demand -> simple ceil per destination
+        if pd.isna(mcp) or mcp <= 0 or total_planned <= 0:
+            safe_mcp = mcp if (mcp and mcp > 0) else np.nan
+            raw_cases = group["Planned_Demand_dest"] / safe_mcp
+            cases = np.ceil(raw_cases).fillna(0).clip(lower=0).astype("Int64")
+            group["Planned_Demand_cases_need"] = cases
+            return group
 
+        # Target total cases from original total demand
+        target_total_cases = total_planned / mcp
+
+        # If total_planned not an exact multiple of MCP -> simple ceil per dest
+        if not np.isclose(target_total_cases, round(target_total_cases)):
+            raw_cases = group["Planned_Demand_dest"] / mcp
+            cases = np.ceil(raw_cases).fillna(0).clip(lower=0).astype("Int64")
+            group["Planned_Demand_cases_need"] = cases
+            return group
+
+        # Here: Planned_Demand is nicely divisible by MCP
+        target_total_cases = int(round(target_total_cases))
+
+        raw_cases = group["Planned_Demand_dest"] / mcp
+        base_cases = np.floor(raw_cases)
+        frac = raw_cases - base_cases
+
+        base_sum = int(base_cases.sum())
+
+        # If floor allocations already hit the target, we're done
+        if base_sum == target_total_cases:
+            group["Planned_Demand_cases_need"] = base_cases.astype("Int64")
+            return group
+
+        # Distribute remaining cases to largest remainders
+        remaining = target_total_cases - base_sum
+        cases = base_cases.copy()
+
+        if remaining > 0:
+            # indices sorted by descending fractional part
+            order = np.argsort(-frac.to_numpy())
+            for idx in order[:remaining]:
+                cases.iloc[idx] += 1
+
+        cases = cases.clip(lower=0).astype("Int64")
+        group["Planned_Demand_cases_need"] = cases
+        return group
+
+    # Group by SKU – using CHW_SKU_NUMBER as the key
+    long = long.groupby("CHW_SKU_NUMBER", group_keys=False).apply(_allocate_cases_per_sku)
 
     return long
+
 
 
 #putting them together
@@ -194,7 +281,9 @@ if __name__ == "__main__":
     config = get_snowflake_config()
     conn = setconnection(config)
 
-    #df_sku_data = process_demand_data()
+    # df_sku_data = process_demand_data()
+    # ok, count = sql_lite_store.save_table(df_sku_data, "df_sku_data")
+    # print(f"Saved {count} rows to df_sku_data")
     df_sku_data = sql_lite_store.load_table("df_sku_data")
     df_CBM_Max = sql_lite_store.load_table("CBM_Max")
     df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
@@ -207,6 +296,8 @@ if __name__ == "__main__":
     container_plan_rows = state_loader.load_container_plan_rows(demand_by_Dest)
 
     vendor_state_list = state_loader.df_to_vendor_states(df_sku_data, df_CBM_Max, sku_data_state_list, container_plan_rows)
+
+    print(vendor_state_list)
 
 
     

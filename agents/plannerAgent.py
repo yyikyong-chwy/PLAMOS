@@ -78,8 +78,8 @@ def apply_prompt_rules(vendor: vendorState):
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
             c) if MDT is one of the containers, then propose to consolidate with other destinations.
 
-        4. If all containers are FULL and only one container is NOT_QUITE_FULL:
-            a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+        4. If all containers are FULL and only one container is not status FULL:
+            propose do nothing.
 
         5. if none of rule 1 to 4 applies, propose do_nothing.
         """

@@ -82,6 +82,8 @@ def load_data():
     df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
 
     demand_by_Dest = data_preprocessing.split_base_demand_by_dest(df_sku_data, df_kepplerSplits)
+    #added to help keep row counts in control. i am assuming its not used if there is no demand
+    demand_by_Dest = demand_by_Dest[demand_by_Dest["Planned_Demand"] > 0]
 
     return df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest
 
@@ -94,13 +96,14 @@ def generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_
     return vendor_state_list
 
 if __name__ == "__main__":
-    df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()
+    df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()    
     vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
 
     #iterate through the vendor_state_list and print the vendor_Code and vendor_name
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
-
+        if(current_vendor_state.vendor_Code != "B3722"):
+            continue
 
         config = {"configurable": {"thread_id": "test_session"},
          "recursion_limit": 500,  }
