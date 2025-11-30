@@ -400,7 +400,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         demand_df = pd.DataFrame(demand_met_by_sku_list)
         # Sort by delta to show biggest differences first
         demand_df = demand_df.sort_values(by="delta", ascending=False)
-        print(demand_df.to_string(index=False))
+        print(demand_df[demand_df["delta"] != 0].to_string(index=False))
     else:
         print("No SKU demand data available")
     print("--------------------------------")

@@ -395,8 +395,9 @@ def pad_move(vendor: vendorState, plan: ContainerPlanState, move: Dict) -> None:
         return
 
     # Sort by product score (desc): fast movers / bigger volume / larger cbm
+    #sort by fast movers div by mcp multiply by cbm_case : idea is to prioritize fast movers with larger volume and keeping excess quantities small
     def score(x: Dict) -> float:
-        return float(x["t90"]) * float(x["mcp"]) * float(x["cbm_case"])
+        return float(x["t90"]) / float(x["mcp"]) * float(x["cbm_case"])
     pool.sort(key=lambda x: -score(x))
 
     # ---- NEW: distribute across TOP-N (N=3) candidates by weight ----

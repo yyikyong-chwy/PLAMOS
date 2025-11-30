@@ -102,17 +102,15 @@ if __name__ == "__main__":
     #iterate through the vendor_state_list and print the vendor_Code and vendor_name
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
-        if(current_vendor_state.vendor_Code != "B3722"):
-            continue
 
         config = {"configurable": {"thread_id": "test_session"},
          "recursion_limit": 500,  }
         app = compile_app()
 
-        app.get_graph().draw_mermaid_png(
-            output_file_path="graph.png",
-            draw_method=MermaidDrawMethod.API,
-        )
+        # app.get_graph().draw_mermaid_png(
+        #     output_file_path="graph.png",
+        #     draw_method=MermaidDrawMethod.API,
+        # )
         state = app.invoke(current_vendor_state, config=config)
         current_vendor_state = vendorState.model_validate(state)        
         #print("\n\nContainer Plan Rows:\n", current_vendor_state.container_plans[0].to_df())
