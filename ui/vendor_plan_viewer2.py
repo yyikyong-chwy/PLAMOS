@@ -12,6 +12,7 @@ from data.vendor_state_loader import load_all_vendor_states
 from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
 from states.ContainerPlanMetrics import ContainerPlanMetrics
+from states.ChewySkuState import ChewySkuState
 
 
 # ----------------- helpers ----------------- #
@@ -19,13 +20,7 @@ from states.ContainerPlanMetrics import ContainerPlanMetrics
 def _compute_plan_demand_aggregates(metrics: ContainerPlanMetrics) -> Dict[str, float]:
     """
     Using metrics.demand_met_by_sku (already computed in planEvalAgent),
-    aggregate totals:
-      - total_planned
-      - total_assigned
-      - unmet_total = sum(max(0, original - assigned))
-      - exceed_total = sum(max(0, assigned - original))
-      - met_total    = min(original, assigned) summed across SKUs
-    Then compute percentages relative to total_planned (if > 0).
+    aggregate totals and percentages.
     """
     rows = metrics.demand_met_by_sku or []
     if not rows:
@@ -234,26 +229,25 @@ def _to_float(val) -> float:
         return 0.0
 
 
-def _style_exceed_unmet(row: pd.Series):
+def _style_agg_cells(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Highlight rows:
-      - deep red if demand_unmet_total > 0
-      - deep orange if demand_exceed_total > 0
-    (unmet takes precedence if both > 0)
+    Style function for aggregated metrics:
+      - If demand_unmet_total > 0: color demand_unmet_total and demand_unmet_% dark red.
+      - If demand_exceed_total > 0: color demand_exceed_total and demand_exceed_% orange.
     """
-    styles = [""] * len(row)
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
 
-    unmet_total = _to_float(row.get("demand_unmet_total", 0))
-    exceed_total = _to_float(row.get("demand_exceed_total", 0))
+    for idx, row in df.iterrows():
+        unmet_total = _to_float(row.get("demand_unmet_total", 0))
+        exceed_total = _to_float(row.get("demand_exceed_total", 0))
 
-    if unmet_total > 0:
-        # deep red
-        style_str = "background-color: #b71c1c; color: white;"
-        styles = [style_str] * len(row)
-    elif exceed_total > 0:
-        # deep orange
-        style_str = "background-color: #e65100; color: white;"
-        styles = [style_str] * len(row)
+        if unmet_total > 0:
+            styles.loc[idx, "demand_unmet_total"] = "background-color: #b71c1c; color: white;"
+            styles.loc[idx, "demand_unmet_%"] = "background-color: #b71c1c; color: white;"
+
+        if exceed_total > 0:
+            styles.loc[idx, "demand_exceed_total"] = "background-color: #e65100; color: white;"
+            styles.loc[idx, "demand_exceed_%"] = "background-color: #e65100; color: white;"
 
     return styles
 
@@ -266,6 +260,167 @@ def _short_strategy_name(strategy: str | None) -> str:
     if not strategy:
         return "UNKNOWN"
     return str(strategy).split(".")[-1]
+
+
+def _build_sku_info_map(vendor: vendorState) -> Dict[str, ChewySkuState]:
+    """
+    Introspect vendor to find any attribute that is a List[ChewySkuState]
+    and build a map: product_part_number -> ChewySkuState.
+    """
+    sku_map: Dict[str, ChewySkuState] = {}
+
+    for attr_name in dir(vendor):
+        if attr_name.startswith("_"):
+            continue
+        try:
+            val = getattr(vendor, attr_name)
+        except AttributeError:
+            continue
+
+        if isinstance(val, list) and val:
+            first = val[0]
+            if isinstance(first, ChewySkuState):
+                for cs in val:
+                    sku_map[str(cs.product_part_number)] = cs
+
+    return sku_map
+
+
+def _sku_tooltip_html(cs: ChewySkuState) -> str:
+    """
+    Build a small HTML table to show as a tooltip for a SKU cell.
+    """
+    fields = [
+        ("product_part_number", cs.product_part_number),
+        ("product_name", cs.product_name),
+        ("MOQ", cs.MOQ),
+        ("MCP", cs.MCP),
+        ("case_pk_CBM", cs.case_pk_CBM),
+        ("planned_demand", cs.planned_demand),
+        ("vendor_earliest_ETD", cs.vendor_earliest_ETD),
+        ("MC1", cs.MC1),
+        ("MC2", cs.MC2),
+        ("BRAND", cs.BRAND),
+        ("OH", cs.OH),
+        ("T90_DAILY_AVG", cs.T90_DAILY_AVG),
+        ("F90_DAILY_AVG", cs.F90_DAILY_AVG),
+        ("AVG_LT", cs.AVG_LT),
+        ("ost_ord", cs.ost_ord),
+        ("Next_Delivery", cs.Next_Delivery),
+        ("T90_DOS_OH", cs.T90_DOS_OH),
+        ("F90_DOS_OH", cs.F90_DOS_OH),
+        ("F90_DOS_OO", cs.F90_DOS_OO),
+        ("T90_BELOW", cs.T90_BELOW),
+        ("F90_BELOW", cs.F90_BELOW),
+        ("baseConsumption", cs.baseConsumption),
+        ("bufferConsumption", cs.bufferConsumption),
+        ("baseDemand", cs.baseDemand),
+        ("bufferDemand", cs.bufferDemand),
+        ("excess_demand", cs.excess_demand),
+    ]
+
+    rows_html = []
+    for name, value in fields:
+        v_str = "" if value is None else str(value)
+        rows_html.append(
+            "<tr>"
+            f"<th style='padding:2px 6px;text-align:left;'>{name}</th>"
+            f"<td style='padding:2px 6px;'>{v_str}</td>"
+            "</tr>"
+        )
+
+    table_html = (
+        "<table style='border-collapse:collapse;'>"
+        f"{''.join(rows_html)}"
+        "</table>"
+    )
+    return table_html
+
+
+def _build_po_lines_df(plan: ContainerPlanState, vendor: vendorState) -> pd.DataFrame:
+    """
+    Build the PO line-level grid from the actual plan data.
+
+    Mapping:
+      - Group → container
+      - PO Number → blank
+      - Location → "DEST"
+      - Item_ID → SKU (product_part_number)
+      - Supplier UOM → "EA"
+      - Quantity → Demand (eaches) = cases_assigned * master_case_pack
+      - All other columns → blank
+    """
+    columns = [
+        "Group",
+        "PO Number",
+        "Supplier",
+        "Location",
+        "Expected pickup date",
+        "Expected Delivery Date",
+        "Buyer Code",
+        "FOB code",
+        "Line_number",
+        "Item_ID",
+        "Supplier UOM",
+        "Quantity",
+        "Shipping Agent Code",
+        "Shipping Agent Name",
+        "Tracking Number",
+        "Closed for Finance Indicator",
+        "Supplier Acknowledgement",
+        "Import Type",
+        "EDI 850 or Email Exempt",
+        "Cancellation Reason",
+    ]
+
+    # Get plan data
+    plan_df = plan.to_df()
+
+    if plan_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    plan_df = plan_df.copy()
+
+    # Ensure numeric types for demand calculation
+    for c in ("cases_assigned", "master_case_pack"):
+        if c in plan_df.columns:
+            plan_df[c] = pd.to_numeric(plan_df[c], errors="coerce").fillna(0).astype(int)
+
+    # Calculate demand in eaches
+    plan_df["demand_eaches"] = (plan_df["cases_assigned"] * plan_df["master_case_pack"]).astype(int)
+
+    # Sort by container and SKU for consistent ordering
+    plan_df = plan_df.sort_values(["container", "product_part_number"]).reset_index(drop=True)
+
+    # Build PO lines from plan data
+    data = []
+    for _, row in plan_df.iterrows():
+        po_row = [
+            row["container"],           # Group
+            "",                          # PO Number (blank)
+            "",                          # Supplier (blank)
+            "DEST",                      # Location
+            "",                          # Expected pickup date (blank)
+            "",                          # Expected Delivery Date (blank)
+            "",                          # Buyer Code (blank)
+            "",                          # FOB code (blank)
+            "",                          # Line_number (blank)
+            row["product_part_number"],  # Item_ID (SKU)
+            "EA",                        # Supplier UOM
+            row["demand_eaches"],        # Quantity
+            "",                          # Shipping Agent Code (blank)
+            "",                          # Shipping Agent Name (blank)
+            "",                          # Tracking Number (blank)
+            "",                          # Closed for Finance Indicator (blank)
+            "",                          # Supplier Acknowledgement (blank)
+            "",                          # Import Type (blank)
+            "",                          # EDI 850 or Email Exempt (blank)
+            "",                          # Cancellation Reason (blank)
+        ]
+        data.append(po_row)
+
+    df = pd.DataFrame(data, columns=columns)
+    return df
 
 
 # ----------------- Streamlit app ----------------- #
@@ -304,6 +459,9 @@ def main():
         st.warning("This vendor has no container plans.")
         return
 
+    # Pre-build SKU -> ChewySkuState map for tooltips
+    sku_info_map = _build_sku_info_map(vendor)
+
     # ---- Aggregated plan comparison ----
     st.markdown("### Aggregated Plan Metrics (for comparison)")
 
@@ -338,16 +496,15 @@ def main():
                     lambda x: f"{x:.0f}"
                 )
 
-        # --- Apply row-level color highlighting (unmet/exceed) ---
-        #styled = comp_df_display.style.apply(_style_exceed_unmet, axis=1)
+        # --- Apply cell-level color highlighting (unmet/exceed) ---
+        styled_agg = comp_df_display.style.apply(_style_agg_cells, axis=None)
 
         st.dataframe(
-            comp_df_display,
+            styled_agg,
             use_container_width=True,
         )
     else:
         st.info("No plan metrics available for this vendor yet.")
-
 
     st.markdown("---")
 
@@ -365,15 +522,145 @@ def main():
         with tab:
             st.markdown(f"**{label}**")
 
+            # ---------- Plan detail (container/SKU grid) ----------
             detail_df = _plan_detail_df(plan)
 
             if detail_df.empty:
                 st.info("No rows in this plan.")
             else:
+                # Build SKU -> status map from metrics (unmet / exceed / ok)
+                status_map: Dict[str, str] = {}
+                metrics = plan.metrics or ContainerPlanMetrics()
+                for r in metrics.demand_met_by_sku or []:
+                    sku = str(r.get("product_part_number", ""))
+                    orig = float(r.get("original_demand", 0.0) or 0.0)
+                    assigned = float(r.get("assigned_demand", 0.0) or 0.0)
+                    if orig > assigned:
+                        status_map[sku] = "unmet"
+                    elif assigned > orig:
+                        status_map[sku] = "exceed"
+
+                def _style_plan_detail_rows(row: pd.Series):
+                    """
+                    For any SKU row:
+                      - if demand_unmet -> color row red
+                      - if demand_exceed -> color row orange
+                    """
+                    sku = str(row.get("SKU", ""))
+                    status = status_map.get(sku, "")
+
+                    base_styles = [""] * len(row)
+
+                    if status == "unmet":
+                        color_str = "background-color: #b71c1c; color: white;"
+                        return [color_str] * len(row)
+                    elif status == "exceed":
+                        color_str = "background-color: #e65100; color: white;"
+                        return [color_str] * len(row)
+
+                    return base_styles
+
+                # Note: Streamlit's st.dataframe() does NOT support Pandas set_tooltips()
+                # So we apply row styling only, and provide SKU details via a selectbox below
+                styled_detail = (
+                    detail_df.style
+                    .apply(_style_plan_detail_rows, axis=1)
+                )
+
+                st.markdown("#### Container / SKU Assignment")
                 st.dataframe(
-                    detail_df,
+                    styled_detail,
                     use_container_width=True,
-                    height=500,
+                    height=400,
+                )
+
+                # ---- SKU Detail Viewer (since hover tooltips don't work in st.dataframe) ----
+                unique_skus = detail_df["SKU"].astype(str).unique().tolist()
+                skus_with_info = [s for s in unique_skus if s in sku_info_map]
+
+                if skus_with_info:
+                    st.markdown("##### SKU Details")
+                    selected_sku = st.selectbox(
+                        "Select a SKU to view details:",
+                        options=skus_with_info,
+                        key=f"sku_select_{label}",
+                    )
+
+                    if selected_sku and selected_sku in sku_info_map:
+                        cs = sku_info_map[selected_sku]
+                        status = status_map.get(selected_sku, "ok")
+                        status_label = {"unmet": "🔴 Unmet", "exceed": "🟠 Exceed", "ok": "✅ OK"}.get(status, "")
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("SKU", cs.product_part_number)
+                            st.metric("Status", status_label)
+                            st.metric("Planned Demand", cs.planned_demand)
+                            st.metric("MOQ", cs.MOQ)
+                            st.metric("MCP", cs.MCP)
+                        with col2:
+                            st.metric("case_pk_CBM", cs.case_pk_CBM)
+                            st.metric("OH", cs.OH)
+                            st.metric("T90_DAILY_AVG", cs.T90_DAILY_AVG)
+                            st.metric("F90_DAILY_AVG", cs.F90_DAILY_AVG)
+                            st.metric("AVG_LT", cs.AVG_LT)
+                        with col3:
+                            st.metric("baseDemand", cs.baseDemand)
+                            st.metric("bufferDemand", cs.bufferDemand)
+                            st.metric("baseConsumption", cs.baseConsumption)
+                            st.metric("bufferConsumption", cs.bufferConsumption)
+                            st.metric("excess_demand", cs.excess_demand)
+
+                        with st.expander("All SKU Fields"):
+                            sku_data = {
+                                "product_part_number": cs.product_part_number,
+                                "product_name": cs.product_name,
+                                "MOQ": cs.MOQ,
+                                "MCP": cs.MCP,
+                                "case_pk_CBM": cs.case_pk_CBM,
+                                "planned_demand": cs.planned_demand,
+                                "vendor_earliest_ETD": cs.vendor_earliest_ETD,
+                                "MC1": cs.MC1,
+                                "MC2": cs.MC2,
+                                "BRAND": cs.BRAND,
+                                "OH": cs.OH,
+                                "T90_DAILY_AVG": cs.T90_DAILY_AVG,
+                                "F90_DAILY_AVG": cs.F90_DAILY_AVG,
+                                "AVG_LT": cs.AVG_LT,
+                                "ost_ord": cs.ost_ord,
+                                "Next_Delivery": cs.Next_Delivery,
+                                "T90_DOS_OH": cs.T90_DOS_OH,
+                                "F90_DOS_OH": cs.F90_DOS_OH,
+                                "F90_DOS_OO": cs.F90_DOS_OO,
+                                "T90_BELOW": cs.T90_BELOW,
+                                "F90_BELOW": cs.F90_BELOW,
+                                "baseConsumption": cs.baseConsumption,
+                                "bufferConsumption": cs.bufferConsumption,
+                                "baseDemand": cs.baseDemand,
+                                "bufferDemand": cs.bufferDemand,
+                                "excess_demand": cs.excess_demand,
+                            }
+                            st.json(sku_data)
+
+            # ---------- PO Line Items grid + CSV export ----------
+            st.markdown("#### PO Line Items")
+
+            po_df = _build_po_lines_df(plan, vendor)
+
+            if po_df.empty:
+                st.info("No PO line items for this plan.")
+            else:
+                st.dataframe(
+                    po_df,
+                    use_container_width=True,
+                )
+
+                csv_data = po_df.to_csv(index=False)
+                st.download_button(
+                    label="Download PO Lines as CSV",
+                    data=csv_data,
+                    file_name=f"{vendor.vendor_Code}_{label}_po_lines.csv",
+                    mime="text/csv",
                 )
 
 
