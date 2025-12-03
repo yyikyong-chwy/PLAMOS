@@ -95,7 +95,9 @@ def generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_
 
     return vendor_state_list
 
-if __name__ == "__main__":
+#basically a wrapper for the main function workflow
+def run_workflow():
+    
     df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()    
     vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
 
@@ -123,6 +125,10 @@ if __name__ == "__main__":
         print("\n\n")
 
         vendor_state_store.save_vendor_state_blob(".", current_vendor_state)
+
+
+if __name__ == "__main__":
+    run_workflow()
 
     
         
