@@ -73,7 +73,7 @@ WITH base AS (
   GROUP BY 1, 2
 )
 SELECT
-  CHW_SKU_NUMBER,
+  CHW_SKU_NUMBER AS ITEM_ID,
   cartonization_flag,
   Total_Stat_FCAST,
   TLA1_Fcast,

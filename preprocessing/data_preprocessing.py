@@ -31,7 +31,7 @@ def process_demand_data() -> pd.DataFrame:
     config = get_snowflake_config()
     conn = setconnection(config)
     df_kepplerSplits = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_KEPLER_SPLITS)
-    df_kepplerSplits = snowflake_pull.mutate_keppler_splits(df_kepplerSplits)
+    #df_kepplerSplits = snowflake_pull.mutate_keppler_splits(df_kepplerSplits) #no longer needed
 
     sql_lite_store.save_table(df_kepplerSplits, "Keppler_Split_Perc") #save a copy for reference
     #df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
@@ -311,7 +311,7 @@ if __name__ == "__main__":
     config = get_snowflake_config()
     conn = setconnection(config)
 
-    #df_sku_data = process_demand_data()
+    df_sku_data = process_demand_data()
     # ok, count = sql_lite_store.save_table(df_sku_data, "df_sku_data")
     # print(f"Saved {count} rows to df_sku_data")
     df_sku_data = sql_lite_store.load_table("df_sku_data")
