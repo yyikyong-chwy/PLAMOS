@@ -15,5 +15,5 @@ if [ $? -ne 0 ]; then
 fi
 
 # Launch the app
-streamlit run ui/vendor_plan_viewer.py
+streamlit run ui/vendor_plan_viewer2.py
 

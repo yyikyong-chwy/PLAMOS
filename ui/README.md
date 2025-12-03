@@ -42,13 +42,13 @@ uv add streamlit pandas plotly
 From the project root directory, run:
 
 ```bash
-streamlit run ui/vendor_plan_viewer.py
+streamlit run ui/vendor_plan_viewer2.py
 ```
 
 Or if using uv:
 
 ```bash
-uv run streamlit run ui/vendor_plan_viewer.py
+uv run streamlit run ui/vendor_plan_viewer2.py
 ```
 
 The app will open in your default web browser at `http://localhost:8501`

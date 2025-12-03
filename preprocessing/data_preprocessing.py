@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from data.snowflake_pull import get_snowflake_config, setconnection, run_query_to_df
+from data.snowflake_pull import get_snowflake_config, setconnection, run_query_to_df, mutate_keppler_splits
 import data.sql_lite_store as sql_lite_store
 import data.snowflake_pull as snowflake_pull
 
@@ -21,13 +21,22 @@ def keep_first_max_avglt(df: pd.DataFrame) -> pd.DataFrame:
     idx = df.groupby("SKU")["AVG_LT"].idxmax()   # index of max AVG_LT per SKU
     return df.loc[idx].reset_index(drop=True)
 
+
+
 def process_demand_data() -> pd.DataFrame:
+
     df_demand = sql_lite_store.load_table("demand_data")
-    df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
     df_CBM_Max = sql_lite_store.load_table("CBM_Max")
 
     config = get_snowflake_config()
     conn = setconnection(config)
+    df_kepplerSplits = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_KEPLER_SPLITS)
+    df_kepplerSplits = snowflake_pull.mutate_keppler_splits(df_kepplerSplits)
+
+    sql_lite_store.save_table(df_kepplerSplits, "Keppler_Split_Perc") #save a copy for reference
+    #df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
+    
+
 
     df_skuSupplySnapshot = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_SKU_Supply_Snapshot)
     df_vendor_cbm = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_Vendor_CBM)
@@ -55,6 +64,24 @@ def process_demand_data() -> pd.DataFrame:
     df_demand = df_demand[["product_part_number", "Final Buy Qty"]].copy()
     df_demand = df_demand.rename(columns={'product_part_number': 'CHW_SKU_NUMBER', 'Final Buy Qty': 'Planned_Demand'})
     df_demand['CHW_SKU_NUMBER'] = df_demand['CHW_SKU_NUMBER'].astype(str).str.strip()
+    # --- NEW: SKUs in demand but not in vendor_cbm (anti-join) ---
+    df_vendor_cbm_keys = df_vendor_cbm[['CHW_SKU_NUMBER']].copy()
+    df_vendor_cbm_keys['CHW_SKU_NUMBER'] = df_vendor_cbm_keys['CHW_SKU_NUMBER'].astype(str).str.strip()
+
+    df_demand_vs_vendor_cbm = df_demand.merge(
+        df_vendor_cbm_keys,
+        on="CHW_SKU_NUMBER",
+        how="left",
+        indicator=True,
+    )
+
+    df_missing_in_vendor_cbm = (
+        df_demand_vs_vendor_cbm[df_demand_vs_vendor_cbm["_merge"] == "left_only"]
+        .drop(columns=["_merge"])
+    )
+
+    # if you want to persist this as a DQ table:
+    sql_lite_store.save_table(df_missing_in_vendor_cbm, "DQ_skus_w_no_record_in_plm")
 
     df_demand = df_demand.merge(
         df_vendor_cbm,
@@ -142,6 +169,9 @@ def process_demand_data() -> pd.DataFrame:
     "bufferConsumption", "baseDemand", "bufferDemand", "excess_demand"]
     df_sku_data[cols_to_fill_zero] = df_sku_data[cols_to_fill_zero].fillna(0)
 
+
+    ok, count = sql_lite_store.save_table(df_sku_data, "df_sku_data")
+    print(f"Saved {count} rows to df_sku_data")
     return df_sku_data
 
 import numpy as np
@@ -281,7 +311,7 @@ if __name__ == "__main__":
     config = get_snowflake_config()
     conn = setconnection(config)
 
-    # df_sku_data = process_demand_data()
+    #df_sku_data = process_demand_data()
     # ok, count = sql_lite_store.save_table(df_sku_data, "df_sku_data")
     # print(f"Saved {count} rows to df_sku_data")
     df_sku_data = sql_lite_store.load_table("df_sku_data")
