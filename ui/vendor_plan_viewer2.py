@@ -153,7 +153,7 @@ def _build_plan_comparison_df(vendor: vendorState) -> pd.DataFrame:
 def _plan_detail_df(plan: ContainerPlanState) -> pd.DataFrame:
     """
     Build detailed table for a plan:
-      container, SKU, demand (assigned eaches),
+      container, DEST, SKU, demand (assigned eaches),
       cbm_assigned, cbm_cumulative (per container).
     """
     df = plan.to_df()
@@ -161,6 +161,7 @@ def _plan_detail_df(plan: ContainerPlanState) -> pd.DataFrame:
         return pd.DataFrame(
             columns=[
                 "container",
+                "DEST",
                 "SKU",
                 "Demand (eaches)",
                 "CBM occupied",
@@ -192,8 +193,11 @@ def _plan_detail_df(plan: ContainerPlanState) -> pd.DataFrame:
         .astype(float)
     )
 
+    # DEST column already exists in the data from ContainerPlanRow
+
     out = df[[
         "container",
+        "DEST",
         "product_part_number",
         "demand_assigned",
         "cbm_assigned",
@@ -337,6 +341,51 @@ def _sku_tooltip_html(cs: ChewySkuState) -> str:
     return table_html
 
 
+def _build_sku_details_df(
+    skus: List[str], 
+    sku_info_map: Dict[str, ChewySkuState], 
+) -> pd.DataFrame:
+    """
+    Build a DataFrame with all SKU details for grid display.
+    """
+    records = []
+    for sku in skus:
+        if sku not in sku_info_map:
+            continue
+        cs = sku_info_map[sku]
+        
+        records.append({
+            "SKU": cs.product_part_number,
+            "Product Name": cs.product_name,
+            "Planned Demand": cs.planned_demand,
+            "MOQ": cs.MOQ,
+            "MCP": cs.MCP,
+            "CBM/Case": cs.case_pk_CBM,
+            "OH": cs.OH,
+            "T90 Daily Avg": cs.T90_DAILY_AVG,
+            "F90 Daily Avg": cs.F90_DAILY_AVG,
+            "Avg LT": cs.AVG_LT,
+            "Base Demand": cs.baseDemand,
+            "Buffer Demand": cs.bufferDemand,
+            "Base Consumption": cs.baseConsumption,
+            "Buffer Consumption": cs.bufferConsumption,
+            "Excess Demand": cs.excess_demand,
+            "T90 DOS OH": cs.T90_DOS_OH,
+            "F90 DOS OH": cs.F90_DOS_OH,
+            "F90 DOS OO": cs.F90_DOS_OO,
+            "T90 Below": cs.T90_BELOW,
+            "F90 Below": cs.F90_BELOW,
+            "OST Ord": cs.ost_ord,
+            "Next Delivery": cs.Next_Delivery,
+            "Brand": cs.BRAND,
+            "MC1": cs.MC1,
+            "MC2": cs.MC2,
+            "ETD": cs.vendor_earliest_ETD,
+        })
+    
+    return pd.DataFrame(records)
+
+
 def _build_po_lines_df(plan: ContainerPlanState, vendor: vendorState) -> pd.DataFrame:
     """
     Build the PO line-level grid from the actual plan data.
@@ -344,7 +393,7 @@ def _build_po_lines_df(plan: ContainerPlanState, vendor: vendorState) -> pd.Data
     Mapping:
       - Group → container
       - PO Number → blank
-      - Location → "DEST"
+      - Location → DEST (actual destination like TNY1, TLA1, MDT1)
       - Item_ID → SKU (product_part_number)
       - Supplier UOM → "EA"
       - Quantity → Demand (eaches) = cases_assigned * master_case_pack
@@ -399,7 +448,7 @@ def _build_po_lines_df(plan: ContainerPlanState, vendor: vendorState) -> pd.Data
             row["container"],           # Group
             "",                          # PO Number (blank)
             "",                          # Supplier (blank)
-            "DEST",                      # Location
+            row["DEST"],                 # Location (actual destination like TNY1, TLA1, MDT1)
             "",                          # Expected pickup date (blank)
             "",                          # Expected Delivery Date (blank)
             "",                          # Buyer Code (blank)
@@ -568,79 +617,94 @@ def main():
                 )
 
                 st.markdown("#### Container / SKU Assignment")
-                st.dataframe(
+                st.caption("💡 Click on a row to filter SKU Details below to that SKU")
+                
+                # Use dataframe with selection to capture clicked SKU
+                selection = st.dataframe(
                     styled_detail,
                     use_container_width=True,
                     height=400,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=f"container_sku_grid_{label}",
                 )
+                
+                # Extract selected SKU from the selection
+                selected_sku_from_grid = None
+                if selection and selection.selection and selection.selection.rows:
+                    selected_row_idx = selection.selection.rows[0]
+                    if selected_row_idx < len(detail_df):
+                        selected_sku_from_grid = str(detail_df.iloc[selected_row_idx]["SKU"])
 
-                # ---- SKU Detail Viewer (since hover tooltips don't work in st.dataframe) ----
+                # ---- SKU Details Grid ----
                 unique_skus = detail_df["SKU"].astype(str).unique().tolist()
                 skus_with_info = [s for s in unique_skus if s in sku_info_map]
 
                 if skus_with_info:
                     st.markdown("##### SKU Details")
-                    selected_sku = st.selectbox(
-                        "Select a SKU to view details:",
-                        options=skus_with_info,
-                        key=f"sku_select_{label}",
+                    
+                    sku_details_df = _build_sku_details_df(skus_with_info, sku_info_map)
+                    
+                    # Session state key for the SKU filter
+                    filter_key = f"sku_filter_{label}"
+                    
+                    # Initialize session state if not exists
+                    if filter_key not in st.session_state:
+                        st.session_state[filter_key] = ""
+                    
+                    # If a SKU was selected from the grid above, update session state
+                    # (must be done before the widget is rendered)
+                    if selected_sku_from_grid:
+                        st.session_state[filter_key] = selected_sku_from_grid
+                    
+                    # Callback function for clear button (runs before widget instantiation on next rerun)
+                    def clear_filter_callback(key):
+                        st.session_state[key] = ""
+                    
+                    # Filter controls row
+                    filter_col1, filter_col2 = st.columns([4, 1])
+                    
+                    with filter_col1:
+                        # Add search/filter capability
+                        sku_search = st.text_input(
+                            "🔍 Filter SKUs",
+                            key=filter_key,
+                            placeholder="Type to filter by SKU or Product Name..."
+                        )
+                    
+                    with filter_col2:
+                        # Clear filter button with callback
+                        st.button(
+                            "Clear Filter", 
+                            key=f"clear_filter_{label}",
+                            on_click=clear_filter_callback,
+                            args=(filter_key,)
+                        )
+                    
+                    if sku_search:
+                        mask = (
+                            sku_details_df["SKU"].str.contains(sku_search, case=False, na=False) |
+                            sku_details_df["Product Name"].str.contains(sku_search, case=False, na=False)
+                        )
+                        filtered_sku_df = sku_details_df[mask]
+                    else:
+                        filtered_sku_df = sku_details_df
+                    
+                    st.dataframe(
+                        filtered_sku_df,
+                        use_container_width=True,
+                        height=400,
                     )
-
-                    if selected_sku and selected_sku in sku_info_map:
-                        cs = sku_info_map[selected_sku]
-                        status = status_map.get(selected_sku, "ok")
-                        status_label = {"unmet": "🔴 Unmet", "exceed": "🟠 Exceed", "ok": "✅ OK"}.get(status, "")
-
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("SKU", cs.product_part_number)
-                            st.metric("Status", status_label)
-                            st.metric("Planned Demand", cs.planned_demand)
-                            st.metric("MOQ", cs.MOQ)
-                            st.metric("MCP", cs.MCP)
-                        with col2:
-                            st.metric("case_pk_CBM", cs.case_pk_CBM)
-                            st.metric("OH", cs.OH)
-                            st.metric("T90_DAILY_AVG", cs.T90_DAILY_AVG)
-                            st.metric("F90_DAILY_AVG", cs.F90_DAILY_AVG)
-                            st.metric("AVG_LT", cs.AVG_LT)
-                        with col3:
-                            st.metric("baseDemand", cs.baseDemand)
-                            st.metric("bufferDemand", cs.bufferDemand)
-                            st.metric("baseConsumption", cs.baseConsumption)
-                            st.metric("bufferConsumption", cs.bufferConsumption)
-                            st.metric("excess_demand", cs.excess_demand)
-
-                        with st.expander("All SKU Fields"):
-                            sku_data = {
-                                "product_part_number": cs.product_part_number,
-                                "product_name": cs.product_name,
-                                "MOQ": cs.MOQ,
-                                "MCP": cs.MCP,
-                                "case_pk_CBM": cs.case_pk_CBM,
-                                "planned_demand": cs.planned_demand,
-                                "vendor_earliest_ETD": cs.vendor_earliest_ETD,
-                                "MC1": cs.MC1,
-                                "MC2": cs.MC2,
-                                "BRAND": cs.BRAND,
-                                "OH": cs.OH,
-                                "T90_DAILY_AVG": cs.T90_DAILY_AVG,
-                                "F90_DAILY_AVG": cs.F90_DAILY_AVG,
-                                "AVG_LT": cs.AVG_LT,
-                                "ost_ord": cs.ost_ord,
-                                "Next_Delivery": cs.Next_Delivery,
-                                "T90_DOS_OH": cs.T90_DOS_OH,
-                                "F90_DOS_OH": cs.F90_DOS_OH,
-                                "F90_DOS_OO": cs.F90_DOS_OO,
-                                "T90_BELOW": cs.T90_BELOW,
-                                "F90_BELOW": cs.F90_BELOW,
-                                "baseConsumption": cs.baseConsumption,
-                                "bufferConsumption": cs.bufferConsumption,
-                                "baseDemand": cs.baseDemand,
-                                "bufferDemand": cs.bufferDemand,
-                                "excess_demand": cs.excess_demand,
-                            }
-                            st.json(sku_data)
+                    
+                    # CSV download for SKU details
+                    csv_sku_data = sku_details_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download SKU Details as CSV",
+                        data=csv_sku_data,
+                        file_name=f"{vendor.vendor_Code}_{label}_sku_details.csv",
+                        mime="text/csv",
+                        key=f"sku_csv_{label}",
+                    )
 
             # ---------- PO Line Items grid + CSV export ----------
             st.markdown("#### PO Line Items")
