@@ -20,7 +20,7 @@ if "stdout_redirected" not in st.session_state:
     sys.stdout = open("logs/prints.out.log", "a", buffering=1, encoding="utf-8")  # line-buffered
     sys.stderr = open("logs/prints.err.log", "a", buffering=1, encoding="utf-8")
 
-import data.demand_pull as demand_pull
+import data.snowflake_pull as snowflake_pull
 import data.sql_lite_store as sql_lite_store
 
 
@@ -87,18 +87,13 @@ def read_excel_visible_sheets(file):
 # ---------- Snowflake fetchers ----------
 def fetch_keppler_split_perc():
     """
-    Pull Keppler split percentage data from Snowflake using your demand_pull module.
-    Expects:
-      - demand_pull.get_snowflake_config()
-      - demand_pull.setconnection(config)
-      - demand_pull.run_query_to_df(conn, demand_pull.SQL_KEPLER_SPLITS)
-      - demand_pull.mutate_keppler_splits(df)
+    Pull Keppler split percentage data from Snowflake using snowflake_pull module.
     """
     try:
-        cfg = demand_pull.get_snowflake_config()
-        conn = demand_pull.setconnection(cfg)
-        df = demand_pull.run_query_to_df(conn, demand_pull.SQL_KEPLER_SPLITS)
-        df = demand_pull.mutate_keppler_splits(df)
+        cfg = snowflake_pull.get_snowflake_config()
+        conn = snowflake_pull.setconnection(cfg)
+        df = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_KEPLER_SPLITS)
+        df = snowflake_pull.mutate_keppler_splits(df)
         conn.close()
         return df
     except Exception as e:
@@ -108,12 +103,12 @@ def fetch_keppler_split_perc():
 
 def fetch_vendor_cbm():
     """
-    Pull vendor CBM data from Snowflake using your demand_pull module.
+    Pull vendor CBM data from Snowflake using snowflake_pull module.
     """
     try:
-        cfg = demand_pull.get_snowflake_config()
-        conn = demand_pull.setconnection(cfg)
-        df = demand_pull.run_query_to_df(conn, demand_pull.SQL_Vendor_CBM)
+        cfg = snowflake_pull.get_snowflake_config()
+        conn = snowflake_pull.setconnection(cfg)
+        df = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_Vendor_CBM)
         conn.close()
         return df
     except Exception as e:

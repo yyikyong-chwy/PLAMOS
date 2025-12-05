@@ -87,6 +87,63 @@ FROM base;
 """
 
 
+SQL_SKU_MARGIN = """
+SELECT 
+    pp.product_part_number,
+
+    /* SKU-level units + sales */
+    SUM(COALESCE(olcm.order_line_quantity, 0))              AS units,
+    SUM(COALESCE(olcm.order_line_total_price, 0))           AS total_price,
+    SUM(COALESCE(olcm.order_line_net_sales, 0))             AS net_sales,  -- topline + adjustment + ship charge
+
+    /* === SKU-level COGS === */
+    SUM(
+        COALESCE(olcm.order_line_raw_product_margin, 0)
+        - COALESCE(olcm.order_line_net_sales, 0)
+        - COALESCE(olcm.order_line_total_standard_inbound_cost, 0)
+    ) AS cogs,  -- CoGS + royalties (per your original logic)
+
+    /* === SKU-level product margin === */
+    SUM(
+        COALESCE(olcm.order_line_raw_product_margin, 0)
+    ) AS product_margin,
+
+    /* product margin per unit */
+    SUM(COALESCE(olcm.order_line_raw_product_margin, 0))
+        / NULLIF(SUM(COALESCE(olcm.order_line_quantity, 0)), 0) AS product_margin_per_unit,
+
+    /* inbound freight */
+    SUM(COALESCE(olcm.order_line_total_standard_inbound_cost, 0)) AS inbound_freight,
+
+    /* subtotal = COGS + inbound freight, same as original logic */
+    (
+        SUM(
+            COALESCE(olcm.order_line_raw_product_margin, 0)
+            - COALESCE(olcm.order_line_net_sales, 0)
+            - COALESCE(olcm.order_line_total_standard_inbound_cost, 0)
+        )
+        + SUM(COALESCE(olcm.order_line_total_standard_inbound_cost, 0))
+    ) AS cogs_subtotal
+
+FROM edldb.chewybi.order_line_cost_measures AS olcm
+INNER JOIN edldb.chewybi.orders AS orders USING (order_key)
+INNER JOIN edldb.chewybi.products pp 
+    ON pp.product_key = olcm.product_key
+LEFT JOIN edldb.chewybi.business_channels 
+    ON business_channels.business_channel_key = olcm.business_channel_key
+WHERE 
+    olcm.product_company_description = 'Chewy'
+    AND LOWER(orders.order_status) NOT IN ('x', 'j')
+    AND olcm.order_placed_date::date BETWEEN CURRENT_DATE - 720 AND CURRENT_DATE - 1
+    AND pp.product_merch_classification1 NOT IN ('Gift Cards', 'Virtual Bundle', 'Programs')
+    AND pp.product_merch_classification1 IS NOT NULL
+    AND pp.product_discontinued_flag = 'false'
+    AND UPPER(TRIM(pp.product_merch_classification2)) <> 'PHARMACY'
+    AND pp.private_label_flag = 'true'
+GROUP BY 
+    pp.product_part_number;
+"""
+
 SQL_Vendor_CBM = """
 select PRODUCT, CHW_SKU_NUMBER, MC1_NAME, MC2_NAME, MC3_NAME, Brand, CUSTOMER_EARLIEST_TARGET_DATE, EARLIEST_TARGET_DATE, CHW_MOQ_LEVEL,
 CHW_OTB, CHW_PRIMARY_SUPPLIER_NAME, CHW_PRIMARY_SUPPLIER_NUMBER, PRIMARY_SUPPLIER, CHW_MASTER_CASE_PACK, CHW_MASTER_CARTON_CBM
@@ -96,8 +153,24 @@ and CHW_PRIMARY_SUPPLIER_NAME is not null
 and nullif(trim(CHW_SKU_NUMBER), '') is not null
 """
 
+SQL_SKU_FCST = """
+select c.product_part_number as SKU, c.forecast_date, c.dw_fcst
+FROM edldb.sc_sandbox.DW_fcst_item_day_network_colt c
+JOIN edldb.chewybi.products p ON c.PRODUCT_PART_NUMBER = p.PRODUCT_PART_NUMBER 
+join chewybi.product_attributes pa on pa.partnumber = p.product_part_number        
+WHERE 1=1 
+and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
+AND SNAPSHOT_DATE = (select max(SNAPSHOT_DATE) from edldb.sc_sandbox.DW_fcst_item_day_network_colt)
+and p.private_label_flag = '1'
+and p.product_discontinued_flag = 'false'
+AND c.FORECAST_DATE BETWEEN current_date and current_date+180
+AND p.PRODUCT_COMPANY_DESCRIPTION in ('Chewy')
+and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE';
+"""
+
 
 SQL_SKU_Supply_Snapshot = """
+
 with T90 as (        
         select 
         p.product_part_number as SKU
@@ -108,7 +181,7 @@ with T90 as (
         join chewybi.product_attributes pa on pa.partnumber = p.product_part_number
 
         where 1=1
-        and pa."attribute.onetimebuy" = 'false'
+        and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
         and p.private_label_flag = '1'
         --and p.product_merch_classification1 in ('Hard Goods','Dog Consumables','Cat Consumables')
         and p.product_discontinued_flag = 'false'
@@ -131,12 +204,32 @@ F90 as (
         join chewybi.product_attributes pa on pa.partnumber = p.product_part_number
         
         WHERE 1=1 
-        and pa."attribute.onetimebuy" = 'false'
+        and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
         AND SNAPSHOT_DATE = (select max(SNAPSHOT_DATE) from edldb.sc_sandbox.DW_fcst_item_day_network_colt)
         and p.private_label_flag = '1'
         --and p.product_merch_classification1 in ('Hard Goods','Dog Consumables','Cat Consumables')
         and p.product_discontinued_flag = 'false'
         AND c.FORECAST_DATE BETWEEN current_date and current_date+90
+        AND p.PRODUCT_COMPANY_DESCRIPTION in ('Chewy')
+
+        GROUP BY 1
+),
+
+F180 as (
+        SELECT  p.PRODUCT_PART_NUMBER as SKU, 
+        round(SUM(DW_FCST)/180,2) as F180_Daily_Avg
+        
+        FROM edldb.sc_sandbox.DW_fcst_item_day_network_colt c
+
+        JOIN edldb.chewybi.products p ON c.PRODUCT_PART_NUMBER = p.PRODUCT_PART_NUMBER 
+        join chewybi.product_attributes pa on pa.partnumber = p.product_part_number
+        
+        WHERE 1=1 
+        and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
+        AND SNAPSHOT_DATE = (select max(SNAPSHOT_DATE) from edldb.sc_sandbox.DW_fcst_item_day_network_colt)
+        and p.private_label_flag = '1'
+        and p.product_discontinued_flag = 'false'
+        AND c.FORECAST_DATE BETWEEN current_date and current_date+180
         AND p.PRODUCT_COMPANY_DESCRIPTION in ('Chewy')
 
         GROUP BY 1
@@ -197,7 +290,7 @@ LT as (
                 FROM edldb.sc_replenishment_sandbox.SOCRATES_LEAD_TIME_PREDICTION_INPUT
                 )
         and active_agreement =1
-        and pa."attribute.onetimebuy" = 'false'
+        and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
         and p.private_label_flag = '1'
         --and p.product_merch_classification1 in ('Hard Goods','Dog Consumables','Cat Consumables')
         and p.product_discontinued_flag = 'false'
@@ -264,6 +357,16 @@ OO as (
         else
         round(zeroifnull(OO)/F90_Daily_Avg,2) end as F90_DOS_OO,
         
+        case when F180_Daily_Avg = 0
+        then null
+        else
+        round(sum(inventory_snapshot_sellable_quantity)/ifnull(F180_Daily_Avg,.00001),2) end as F180_DOS_OH,
+        
+        case when F180_Daily_Avg = 0
+        then null
+        else
+        round(zeroifnull(OO)/F180_Daily_Avg,2) end as F180_DOS_OO,
+        
         case when T90_DOS_OH < avg_lt
                 then true
                 else false
@@ -292,6 +395,8 @@ OO as (
                 on p.product_part_number = T90.SKU
         join F90
                 on p.product_part_number = F90.SKU
+        join F180
+                on p.product_part_number = F180.SKU
         join LT
                 on LT.product_part_number = p.product_part_number
         left join OO
@@ -307,7 +412,21 @@ OO as (
         and l.location_active_warehouse = 1
         and l.location_warehouse_type = 0
         AND p.PRODUCT_COMPANY_DESCRIPTION in ('Chewy')
-        group by 1,2,3,4,5,6,7,8,9,10,11,12,13
+          GROUP BY
+        p.product_merch_classification1,
+        p.product_merch_classification2,
+        p.product_manufacturer_name,
+        p.parent_product_part_number,
+        p.product_part_number,
+        p.product_name,
+        product_published_flag,
+        OH.current_on_hand,
+        T90.T90_Daily_Avg,
+        F90.F90_Daily_Avg,
+        F180.F180_Daily_Avg,
+        LT.avg_lt,
+        zeroifnull(OO.OO),
+        OO.next_delivery
         order by 1
 """
 
