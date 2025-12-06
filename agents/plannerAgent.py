@@ -253,3 +253,26 @@ def plannerAgent(vendor: vendorState) -> OneMoveProposal:
     except (ValueError, ValidationError, json.JSONDecodeError) as e:
         vendor.container_plans[-1].moveProposal = OneMoveProposal(action="reduce", rationale=f"Parse error: {e}", reduce=Reduce(cbm_goal=0.0))
         return vendor
+
+
+def planner_move_router(vendor: vendorState) -> str:
+    """
+    Routes the planner move to the appropriate executor agent.
+    If action is 'pad', route to planMovePadExecutorAgent.
+    Otherwise, route to planMoveExecutorAgent.
+    """
+    if not vendor.container_plans:
+        return "planMoveExecutorAgent"
+    
+    plan = vendor.container_plans[-1]
+    move_proposal = getattr(plan, "moveProposal", None)
+    
+    if move_proposal is None:
+        return "planMoveExecutorAgent"
+    
+    action = str(getattr(move_proposal, "action", "") or "").lower()
+    
+    if action == "pad":
+        return "planMovePadExecutorAgent"
+    else:
+        return "planMoveExecutorAgent"

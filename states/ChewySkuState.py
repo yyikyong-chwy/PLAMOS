@@ -9,35 +9,36 @@ from pydantic import BaseModel, Field, ConfigDict
 class ChewySkuState(BaseModel):
     model_config = ConfigDict(revalidate_instances='never')
     
-    parent_product_part_number: Optional[str] = None
     product_part_number: str
     product_name: str
     vendor_Code: str
     vendor_name: Optional[str] = None
-    vendor_purchaser_code: Optional[str] = None
     MOQ: Optional[int] = None
     MCP: Optional[int] = Field(None, description="Master Case Pack")
     case_pk_CBM: Optional[float] = None
     planned_demand: Optional[float] = None
-    vendor_earliest_ETD: Optional[str] = None
     MC1: Optional[str] = None
     MC2: Optional[str] = None
+    MC3: Optional[str] = None
     BRAND: Optional[str] = None
-    PUBBED: Optional[str] = None
+    SKU: Optional[str] = None
+    CHW_OTB: Optional[float] = None
     OH: Optional[int] = None
     T90_DAILY_AVG: Optional[float] = None
     F90_DAILY_AVG: Optional[float] = None
+    F180_DAILY_AVG: Optional[float] = None
     AVG_LT: Optional[int] = None
     ost_ord: Optional[int] = None
-    Next_Delivery: Optional[str] = None
     T90_DOS_OH: Optional[float] = None
     F90_DOS_OH: Optional[float] = None
     F90_DOS_OO: Optional[float] = None
-    T90_BELOW: Optional[float] = None
-    F90_BELOW: Optional[float] = None
-    baseConsumption: Optional[float] = None
-    bufferConsumption: Optional[float] = None
-    baseDemand: Optional[float] = None
-    bufferDemand: Optional[float] = None
-    excess_demand: Optional[float] = None
-
+    F180_DOS_OH: Optional[float] = None
+    F180_DOS_OO: Optional[float] = None
+    demand_within_LT: Optional[float] = None
+    projected_OH_end_LT: Optional[float] = None
+    avg_4wk_runrate: Optional[float] = None
+    DOS_end_LT_days: Optional[float] = None
+    projected_OH_end_LT_plus4w: Optional[float] = None
+    DOS_end_LT_plus4w_days: Optional[float] = None
+    DW_FCST: Optional[float] = None
+    PRODUCT_MARGIN_PER_UNIT: Optional[float] = None

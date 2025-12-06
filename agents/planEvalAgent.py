@@ -27,7 +27,7 @@ def _clamp01(x: float) -> float:
 
 def _sku_cases_map(vendor: vendorState) -> Dict[str, Dict[str, float]]:
     """
-    Build a mapping for each SKU -> {MCP, planned_cases, base_cases, excess_cases, planned_demand_eaches, base_demand_eaches, excess_demand_eaches}
+    Build a mapping for each SKU -> {MCP, planned_cases, planned_demand_eaches}
     All demand fields are assumed to be *eaches* in ChewySkuState; convert to cases via MCP.
     Missing MCP or zero MCP -> skip those SKUs from alignment scoring.
     """
@@ -42,11 +42,7 @@ def _sku_cases_map(vendor: vendorState) -> Dict[str, Dict[str, float]]:
         out[str(s.product_part_number)] = {
             "MCP": float(mcp),
             "planned_cases": to_cases(s.planned_demand),
-            "base_cases":    to_cases(s.baseDemand),
-            "excess_cases":  to_cases(s.excess_demand),
             "planned_demand_eaches": float(s.planned_demand) if s.planned_demand is not None else 0.0,
-            "base_demand_eaches": float(s.baseDemand) if s.baseDemand is not None else 0.0,
-            "excess_demand_eaches": float(s.excess_demand) if s.excess_demand is not None else 0.0,
         }
     return out
 
@@ -178,7 +174,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         return vendor
 
     #weights to evaluate the plan, maybe arbitrary so lets change as it goes
-    weights = {"util": 0.40, "planned": 0.30, "base": 0.20, "excess": 0.10}    
+    weights = {"util": 0.50, "planned": 0.50}    
     low_util_threshold = 0.90
 
     latest_plan = vendor.container_plans[-1]
@@ -222,7 +218,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         target_df.index = target_df.index.astype(str)
     else:
         # Empty structure with expected columns avoids KeyErrors later
-        target_df = pd.DataFrame(columns=["MCP", "planned_cases", "base_cases", "excess_cases"])
+        target_df = pd.DataFrame(columns=["MCP", "planned_cases", "planned_demand_eaches"])
         target_df.index.name = "product_part_number"
 
     # Final assigned cases by SKU (sum across DEST & containers)
@@ -239,31 +235,22 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
     final_cases = final_cases_by_sku.reindex(combined_index).fillna(0.0)
 
     # Make sure target columns exist even if sku_map was empty
-    for col in ("planned_cases", "base_cases", "excess_cases", "planned_demand_eaches", "base_demand_eaches", "excess_demand_eaches", "MCP"):
+    for col in ("planned_cases", "planned_demand_eaches", "MCP"):
         if col not in target_df.columns:
             target_df[col] = np.nan
     target_df = target_df.reindex(combined_index)
 
     # APEs (weighted)
     ape_vs_planned = _weighted_ape(final_cases, target_df["planned_cases"])
-    ape_vs_base = _weighted_underfill_penalty(final_cases, target_df["base_cases"], down_weight=3.0)
-    # For "excess": if excess target is 0, we ignore (weigh only positive targets)
-    #need more thinking on this one
-    #ape_vs_excess  = _weighted_ape(final_cases, target_df["excess_cases"])
 
     # Convert APE (error) to score
     planned_score = 1.0 - _clamp01(ape_vs_planned)
-    base_score    = 1.0 - _clamp01(ape_vs_base)
-    excess_score = 0.0 #defaulting to this for now
-    #excess_score  = 1.0 - _clamp01(ape_vs_excess)
 
     # --- Overall score ---
     overall = (
         100.0
-        * (weights.get("util", 0.40)   * util_score
-         + weights.get("planned", 0.30)* planned_score
-         + weights.get("base", 0.20)   * base_score
-         + weights.get("excess", 0.10) * excess_score)
+        * (weights.get("util", 0.50)   * util_score
+         + weights.get("planned", 0.50)* planned_score)
     )
 
     
@@ -294,44 +281,8 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
     print(container_utilization_status_info)
     print("--------------------------------")
 
-    #    Allocate each SKU's excess_cases across its assigned containers
-    #    proportional to cases_assigned per container, then convert to CBM.
+    # Placeholder for excess tracking (no longer computed as baseDemand/excess_demand removed)
     total_excess_in_cbm_by_container: Dict[Any, float] = {}
-    if not df.empty and not target_df.empty:
-        # per-SKU totals
-        sku_total_cases = (
-            df.groupby("product_part_number")["cases_assigned"].sum().astype(float)
-        )
-        # Merge row-level with sku totals and each row's case_pk_CBM
-        rows = df[["product_part_number","container","cases_assigned","case_pk_CBM"]].copy()
-        rows["product_part_number"] = rows["product_part_number"].astype(str)
-        rows = rows.merge(
-            sku_total_cases.rename("sku_cases_total").reset_index().rename(columns={"index":"product_part_number"}),
-            on="product_part_number",
-            how="left"
-        )
-        # Bring in SKU excess cases (in CASES)
-        sku_excess_cases = target_df["excess_cases"].astype(float).fillna(0.0)
-        rows = rows.merge(
-            sku_excess_cases.rename("excess_cases").reset_index().rename(columns={"index":"product_part_number"}),
-            on="product_part_number",
-            how="left"
-        )
-        rows["sku_cases_total"] = rows["sku_cases_total"].fillna(0.0)
-        rows["excess_cases"] = rows["excess_cases"].fillna(0.0)
-
-        # Proportional allocation per row
-        def _row_excess_cases(r):
-            if r["sku_cases_total"] <= 0 or r["excess_cases"] <= 0:
-                return 0.0
-            share = r["cases_assigned"] / r["sku_cases_total"]
-            return float(share * r["excess_cases"])
-
-        rows["row_excess_cases"] = rows.apply(_row_excess_cases, axis=1)
-        rows["row_excess_cbm"] = rows["row_excess_cases"] * rows["case_pk_CBM"].astype(float)
-
-        by_container = rows.groupby("container")["row_excess_cbm"].sum().fillna(0.0)
-        total_excess_in_cbm_by_container = {k: float(v) for k, v in by_container.to_dict().items()}
 
     # --- DemandMet tracking by SKU ---
     demand_met_by_sku_list: List[Dict[str, Union[str, float]]] = []
@@ -380,7 +331,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         low_util_count=int(low_util_count),
         low_util_threshold=float(low_util_threshold),
         ape_vs_planned=float(ape_vs_planned),
-        ape_vs_base=float(ape_vs_base),
+        ape_vs_base=float(0),
         ape_vs_excess=float(0),
         overall_score=float(overall),
         total_cbm_used_by_container_dest=total_cbm_used_by_container_dest,
@@ -402,7 +353,7 @@ def planEvalAgent(vendor: vendorState) -> vendorState:
         demand_df = demand_df.sort_values(by="delta", ascending=False)
         print(demand_df[demand_df["delta"] != 0].to_string(index=False))
     else:
-        print("No SKU demand data available")
+        print("No SKU demand Delta values available")
     print("--------------------------------")
 
     return vendor

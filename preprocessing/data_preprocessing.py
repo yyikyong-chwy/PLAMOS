@@ -489,7 +489,8 @@ def run_preprocessing(LOAD_FROM_SQL_LITE: bool = False):
 #putting them together
 if __name__ == "__main__":
 
-    vendor_state_list = run_preprocessing(LOAD_FROM_SQL_LITE= True)
+    LOAD_FROM_SQL_LITE= True
+    vendor_state_list = run_preprocessing(LOAD_FROM_SQL_LITE)
 
 
     

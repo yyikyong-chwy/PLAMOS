@@ -12,10 +12,11 @@ from langchain_core.runnables.graph import MermaidDrawMethod
 #agents
 from agents.basePlanAgent import basePlanAgent
 from agents.planEvalAgent import planEvalAgent, plan_eval_router
-from agents.plannerAgent import plannerAgent #this is the one calling llm
+from agents.plannerAgent import plannerAgent, planner_move_router #this is the one calling llm
 from agents.containerPlanPrepAgent import containerPlanPrepAgent
 from agents.planMoveExecutorAgent import planMoveExecutorAgent
 from agents.planMoveCritiqueAgent import planMoveCritiqueAgent, planMoveCritiqueAgent_router
+from agents.planMovePadExecutorAgent import planMovePadExecutorAgent
 
 #states
 from states.vendorState import vendorState
@@ -43,11 +44,21 @@ def build_graph() -> StateGraph:
     graph.add_node("plannerAgent", plannerAgent)
     graph.add_node("planMoveCritiqueAgent", planMoveCritiqueAgent)
     graph.add_node("planMoveExecutorAgent", planMoveExecutorAgent)
+    graph.add_node("planMovePadExecutorAgent", planMovePadExecutorAgent)
     
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
     graph.add_edge("containerPlanPrepAgent", "plannerAgent")
-    graph.add_edge("plannerAgent", "planMoveExecutorAgent")
+    
+    # Conditional edge: route to pad executor if action is "pad", otherwise to move executor
+    graph.add_conditional_edges(
+        "plannerAgent",
+        planner_move_router,
+        {
+            "planMovePadExecutorAgent": "planMovePadExecutorAgent",
+            "planMoveExecutorAgent": "planMoveExecutorAgent",
+        },
+    )
     #graph.add_edge("plannerAgent", "planMoveCritiqueAgent")
 
     # graph.add_conditional_edges(
@@ -60,6 +71,7 @@ def build_graph() -> StateGraph:
     # )
 
     graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move
+    graph.add_edge("planMovePadExecutorAgent", "planEvalAgent") #evaluate the plan after the move
 
     graph.add_conditional_edges(
         "planEvalAgent",
@@ -73,45 +85,19 @@ def build_graph() -> StateGraph:
     
     return graph
 
-#can consider reprecating since its not used
-def load_data(LOAD_FROM_SQL_LITE: bool = False):
-
-    df_sku_data = data_preprocessing.process_demand_data( LOAD_FROM_SQL_LITE)
-    df_sku_data = sql_lite_store.load_table("df_sku_data")
-
-    if not LOAD_FROM_SQL_LITE:
-        config = snowflake_pull.get_snowflake_config()
-        conn = snowflake_pull.setconnection(config)
-        df_CBM_Max = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_CBM_MAX)
-        df_kepplerSplits = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_KEPLER_SPLITS)
-        sql_lite_store.save_table(df_CBM_Max, "CBM_Max") 
-        sql_lite_store.save_table(df_kepplerSplits, "Keppler_Split_Perc") 
-    else:
-        df_CBM_Max = sql_lite_store.load_table("CBM_Max")
-        df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
-
-    demand_by_Dest = data_preprocessing.split_base_demand_by_dest(df_sku_data, df_kepplerSplits)
-
-    return df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest
-
-def generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest):
-    
-    sku_data_state_list = state_loader.df_to_chewy_sku_states(df_sku_data)
-    container_plan_rows = state_loader.load_container_plan_rows(demand_by_Dest)
-    vendor_state_list = state_loader.df_to_vendor_states(df_sku_data, df_CBM_Max, sku_data_state_list, container_plan_rows)
-
-    return vendor_state_list
-
 #basically a wrapper for the main function workflow
-def run_workflow():
+def run_workflow(LOAD_FROM_SQL_LITE: bool = False):
     
     #df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()    
     #vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
-    vendor_state_list = data_preprocessing.run_preprocessing(LOAD_FROM_SQL_LITE= True) #set to false if need to load entirely from snowflake
+    vendor_state_list = data_preprocessing.run_preprocessing(LOAD_FROM_SQL_LITE) #set to false if need to load entirely from snowflake
 
     #iterate through the vendor_state_list and print the vendor_Code and vendor_name
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
+
+        if current_vendor_state.vendor_Code != "B3755":
+            continue
 
         config = {"configurable": {"thread_id": "test_session"},
          "recursion_limit": 500,  }

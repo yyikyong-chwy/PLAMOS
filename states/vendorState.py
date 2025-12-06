@@ -39,5 +39,9 @@ class vendorState(BaseModel):
     def insert_container_plan(self, container_plan: ContainerPlanState) -> None:
         self.container_plans.append(container_plan)
 
-
+    def chewy_sku_info_to_df(self) -> pd.DataFrame:
+        """Convert ChewySku_info list to a pandas DataFrame."""
+        if not self.ChewySku_info:
+            return pd.DataFrame()
+        return pd.DataFrame([sku.model_dump() for sku in self.ChewySku_info])
 

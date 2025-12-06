@@ -49,38 +49,31 @@ def df_to_chewy_sku_states(
     Loader for current df_sku_data schema:
 
     df_sku_data.columns:
-      ['CHW_SKU_NUMBER','Planned_Demand','MC1_NAME','MC2_NAME','MC3_NAME','BRAND',
-       'CHW_MOQ_LEVEL','CHW_PRIMARY_SUPPLIER_NUMBER','CHW_OTB','CHW_MASTER_CASE_PACK',
-       'CHW_MASTER_CARTON_CBM','SKU','PRODUCT_NAME','OH','T90_DAILY_AVG','F90_DAILY_AVG',
-       'AVG_LT','OO','NEXT_DELIVERY','T90_DOS_OH','F90_DOS_OH','F90_DOS_OO','T90_BELOW',
-       'F90_BELOW','ALERT','baseConsumption','bufferConsumption','baseDemand',
-       'bufferDemand','excess_demand']
+      ['CHW_SKU_NUMBER', 'PLANNED_DEMAND', 'MC1_NAME', 'MC2_NAME', 'MC3_NAME',
+       'BRAND', 'CHW_MOQ_LEVEL', 'CHW_PRIMARY_SUPPLIER_NAME',
+       'CHW_PRIMARY_SUPPLIER_NUMBER', 'CHW_OTB', 'CHW_MASTER_CASE_PACK',
+       'CHW_MASTER_CARTON_CBM', 'SKU', 'PRODUCT_NAME', 'OH', 'T90_DAILY_AVG',
+       'F90_DAILY_AVG', 'F180_DAILY_AVG', 'AVG_LT', 'OO', 'T90_DOS_OH',
+       'F90_DOS_OH', 'F90_DOS_OO', 'F180_DOS_OH', 'F180_DOS_OO',
+       'demand_within_LT', 'projected_OH_end_LT', 'avg_4wk_runrate',
+       'DOS_end_LT_days', 'projected_OH_end_LT_plus4w',
+       'DOS_end_LT_plus4w_days', 'DW_FCST', 'PRODUCT_MARGIN_PER_UNIT']
 
-    df_splits (optional) expected columns (case-insensitive):
-      ITEM_ID, MDT1_FRAC, TLA1_FRAC, TNY1_FRAC
-      where ITEM_ID matches CHW_SKU_NUMBER
     """
     dfx = df_sku_data.copy()
     dfx.columns = [c.strip() for c in dfx.columns]
 
-
     out: List[ChewySkuState] = []
 
     for _, r in dfx.iterrows():
-        # keys / aliases from your df
-        sku_num = _to_str(r.get("CHW_SKU_NUMBER"))
-        planned = _to_float(r.get("Planned_Demand"))
-
         cs = ChewySkuState(
             # product identity
-            #parent_product_part_number=_to_str(r.get("CHW_SKU_NUMBER")),                 # not present in your df
-            product_part_number=_to_str(r.get("CHW_SKU_NUMBER")),                     # map CHW_SKU_NUMBER -> product_part_number
-            product_name=_to_str(r.get("PRODUCT_NAME")), #this is the name of the product
+            product_part_number=_to_str(r.get("CHW_SKU_NUMBER")),
+            product_name=_to_str(r.get("PRODUCT_NAME")),
 
             # vendor identity
             vendor_Code=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NUMBER")),
-            vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")),                                # not present in df_sku_data
-            vendor_purchaser_code=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NUMBER")),                      # not present
+            vendor_name=_to_str(r.get("CHW_PRIMARY_SUPPLIER_NAME")),
 
             # pack/constraints
             MOQ=_to_int(r.get("CHW_MOQ_LEVEL")),
@@ -88,34 +81,36 @@ def df_to_chewy_sku_states(
             case_pk_CBM=_to_float(r.get("CHW_MASTER_CARTON_CBM")),
 
             # demand fields
-            planned_demand=_to_float(r.get("Planned_Demand")),
-            vendor_earliest_ETD=None,                        # not present
+            planned_demand=_to_float(r.get("PLANNED_DEMAND")),
             MC1=_to_str(r.get("MC1_NAME")),
             MC2=_to_str(r.get("MC2_NAME")),
+            MC3=_to_str(r.get("MC3_NAME")),
             BRAND=_to_str(r.get("BRAND")),
-            SKU=_to_str(r.get("CHW_SKU_NUMBER")),
-            PUBBED=None,                                     # not present
+            SKU=_to_str(r.get("SKU")),
+            CHW_OTB=_to_float(r.get("CHW_OTB")),
 
             # supply / rates
             OH=_to_int(r.get("OH")),
             T90_DAILY_AVG=_to_float(r.get("T90_DAILY_AVG")),
             F90_DAILY_AVG=_to_float(r.get("F90_DAILY_AVG")),
+            F180_DAILY_AVG=_to_float(r.get("F180_DAILY_AVG")),
             AVG_LT=_to_int(r.get("AVG_LT")),
             ost_ord=_to_int(r.get("OO")),
-            Next_Delivery=_to_str(r.get("NEXT_DELIVERY")),
             T90_DOS_OH=_to_float(r.get("T90_DOS_OH")),
             F90_DOS_OH=_to_float(r.get("F90_DOS_OH")),
             F90_DOS_OO=_to_float(r.get("F90_DOS_OO")),
-            T90_BELOW=_to_float(r.get("T90_BELOW")),
-            F90_BELOW=_to_float(r.get("F90_BELOW")),
+            F180_DOS_OH=_to_float(r.get("F180_DOS_OH")),
+            F180_DOS_OO=_to_float(r.get("F180_DOS_OO")),
 
-            # computed fields
-            baseConsumption=_to_float(r.get("baseConsumption")),
-            bufferConsumption=_to_float(r.get("bufferConsumption")),
-            baseDemand=_to_float(r.get("baseDemand")),
-            bufferDemand=_to_float(r.get("bufferDemand")),
-            excess_demand=_to_float(r.get("excess_demand")),
-
+            # computed/projection fields
+            demand_within_LT=_to_float(r.get("demand_within_LT")),
+            projected_OH_end_LT=_to_float(r.get("projected_OH_end_LT")),
+            avg_4wk_runrate=_to_float(r.get("avg_4wk_runrate")),
+            DOS_end_LT_days=_to_float(r.get("DOS_end_LT_days")),
+            projected_OH_end_LT_plus4w=_to_float(r.get("projected_OH_end_LT_plus4w")),
+            DOS_end_LT_plus4w_days=_to_float(r.get("DOS_end_LT_plus4w_days")),
+            DW_FCST=_to_float(r.get("DW_FCST")),
+            PRODUCT_MARGIN_PER_UNIT=_to_float(r.get("PRODUCT_MARGIN_PER_UNIT")),
         )
         out.append(cs)
 
@@ -191,7 +186,7 @@ def load_container_plan_rows(demand_by_Dest: pd.DataFrame) -> List[ContainerPlan
 
         mcp = _to_int(rec.get("CHW_MASTER_CASE_PACK"))
         cbm = _to_float(rec.get("CHW_MASTER_CARTON_CBM"))
-        need_cases = _to_int(rec.get("Planned_Demand_cases_need"))
+        need_cases = _to_int(rec.get("PLANNED_DEMAND_cases_need"))
 
         if not (vendor_code and vendor_name and dest and sku and mcp is not None and cbm is not None and need_cases is not None):
             # Row is incomplete for the model; skip it
