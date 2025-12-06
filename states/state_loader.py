@@ -160,7 +160,7 @@ def load_container_plan_rows(demand_by_Dest: pd.DataFrame) -> List[ContainerPlan
     required = [
         "CHW_PRIMARY_SUPPLIER_NUMBER", "CHW_PRIMARY_SUPPLIER_NAME", "DEST",
         "CHW_SKU_NUMBER", "CHW_MASTER_CASE_PACK", "CHW_MASTER_CARTON_CBM",
-        "Planned_Demand_cases_need"
+        "PLANNED_DEMAND_cases_need"
     ]
     missing = [c for c in required if c not in demand_by_Dest.columns]
     if missing:

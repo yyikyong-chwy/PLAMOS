@@ -24,9 +24,9 @@ import preprocessing.data_preprocessing as data_preprocessing
 import data.sql_lite_store as sql_lite_store
 import states.state_loader as state_loader
 
-
 #data storage
 import data.vendor_state_store as vendor_state_store
+import data.snowflake_pull as snowflake_pull
 
 def compile_app():
     graph = build_graph()
@@ -73,17 +73,24 @@ def build_graph() -> StateGraph:
     
     return graph
 
+#can consider reprecating since its not used
+def load_data(LOAD_FROM_SQL_LITE: bool = False):
 
-def load_data():
-
-    #df_sku_data = process_demand_data()
+    df_sku_data = data_preprocessing.process_demand_data( LOAD_FROM_SQL_LITE)
     df_sku_data = sql_lite_store.load_table("df_sku_data")
-    df_CBM_Max = sql_lite_store.load_table("CBM_Max")
-    df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
+
+    if not LOAD_FROM_SQL_LITE:
+        config = snowflake_pull.get_snowflake_config()
+        conn = snowflake_pull.setconnection(config)
+        df_CBM_Max = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_CBM_MAX)
+        df_kepplerSplits = snowflake_pull.run_query_to_df(conn, snowflake_pull.SQL_KEPLER_SPLITS)
+        sql_lite_store.save_table(df_CBM_Max, "CBM_Max") 
+        sql_lite_store.save_table(df_kepplerSplits, "Keppler_Split_Perc") 
+    else:
+        df_CBM_Max = sql_lite_store.load_table("CBM_Max")
+        df_kepplerSplits = sql_lite_store.load_table("Keppler_Split_Perc")
 
     demand_by_Dest = data_preprocessing.split_base_demand_by_dest(df_sku_data, df_kepplerSplits)
-    #added to help keep row counts in control. i am assuming its not used if there is no demand
-    demand_by_Dest = demand_by_Dest[demand_by_Dest["Planned_Demand"] > 0]
 
     return df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest
 
@@ -98,8 +105,9 @@ def generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_
 #basically a wrapper for the main function workflow
 def run_workflow():
     
-    df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()    
-    vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
+    #df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()    
+    #vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
+    vendor_state_list = data_preprocessing.run_preprocessing(LOAD_FROM_SQL_LITE= True) #set to false if need to load entirely from snowflake
 
     #iterate through the vendor_state_list and print the vendor_Code and vendor_name
     for current_vendor_state in vendor_state_list:
@@ -128,7 +136,7 @@ def run_workflow():
 
 
 if __name__ == "__main__":
-    run_workflow()
+    run_workflow(LOAD_FROM_SQL_LITE= True)
 
     
         

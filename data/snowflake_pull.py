@@ -89,7 +89,7 @@ FROM base;
 
 SQL_SKU_MARGIN = """
 SELECT 
-    pp.product_part_number,
+    pp.product_part_number as CHW_SKU_NUMBER,
 
     /* SKU-level units + sales */
     SUM(COALESCE(olcm.order_line_quantity, 0))              AS units,
@@ -170,7 +170,6 @@ and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE';
 
 
 SQL_SKU_Supply_Snapshot = """
-
 with T90 as (        
         select 
         p.product_part_number as SKU
@@ -293,7 +292,7 @@ LT as (
         and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
         and p.private_label_flag = '1'
         --and p.product_merch_classification1 in ('Hard Goods','Dog Consumables','Cat Consumables')
-        and p.product_discontinued_flag = 'false'
+        and p.product_discontinued_flag = 'false'        
         and p.PRODUCT_COMPANY_DESCRIPTION in ('Chewy')
         
         group by 1,2,3,4,5
@@ -338,9 +337,9 @@ OO as (
         current_on_hand as OH,
         T90_Daily_Avg,
         F90_Daily_Avg,
+        F180_Daily_Avg,        
         avg_lt,
         zeroifnull(OO) as OO,
-        Next_delivery,
         
         case when T90_Daily_Avg = 0
         then null
@@ -366,21 +365,7 @@ OO as (
         then null
         else
         round(zeroifnull(OO)/F180_Daily_Avg,2) end as F180_DOS_OO,
-        
-        case when T90_DOS_OH < avg_lt
-                then true
-                else false
-                end as T90_below,
-        case when F90_DOS_OH < avg_lt
-                then true
-                else false
-                end as F90_below,
-        case when F90_below =1
-                and (next_delivery is null
-                or next_delivery < current_date)
-                then true
-                else false
-                end as Alert
+
         
         from edldb.chewybi.products p
         join OH
@@ -403,11 +388,10 @@ OO as (
                 on p.product_part_number = OO.SKU                                
                         
         where 1=1
-        and pa."attribute.onetimebuy" = 'false'
+        and COALESCE(pa."attribute.onetimebuy", 'FALSE') != 'TRUE'
         and inventory_snapshot_snapshot_dt = (select max(inventory_snapshot_snapshot_dt) from edldb.chewybi.inventory_snapshot)
         and l.fulfillment_active in ('true')
         and p.private_label_flag = 'true'
-        --and p.product_merch_classification1 in ('Hard Goods','Dog Consumables','Cat Consumables')
         and p.product_discontinued_flag = 'false'
         and l.location_active_warehouse = 1
         and l.location_warehouse_type = 0
