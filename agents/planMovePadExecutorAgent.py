@@ -95,6 +95,7 @@ def calculate_revised_projections(
             "PRODUCT_MARGIN_PER_UNIT": sku.PRODUCT_MARGIN_PER_UNIT or 0.0,
             "case_pk_CBM": sku.case_pk_CBM or 0.0,
             "MCP": sku.MCP or 0,
+            "CHW_OTB": sku.CHW_OTB,
         })
     
     return pd.DataFrame(records)
@@ -117,6 +118,9 @@ def identify_promising_pad_skus(
     
     # Filter out invalid SKUs (must have positive MCP and CBM)
     df = df[(df["MCP"] > 0) & (df["case_pk_CBM"] > 0)].copy()
+    
+    # Filter out SKUs with CHW_OTB = True (truthy value indicates OTB status)
+    df = df[df["CHW_OTB"].isna() | (df["CHW_OTB"] == 0)].copy()
     
     if df.empty:
         return df

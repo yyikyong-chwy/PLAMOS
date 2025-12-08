@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 
 from states.critiqueResult import CritiqueResult
 
-ActionType = Literal["reduce", "consolidate", "pad", "do_nothing"]
+ActionType = Literal["trim", "consolidate", "pad", "do_nothing"]
 
-class Reduce(BaseModel):
+class Trim(BaseModel):
     dest: str
     container: int
     cbm_goal: float
@@ -28,7 +28,7 @@ class Pad(BaseModel):
 class OneMoveProposal(BaseModel):
     action: ActionType
     rationale: str = Field(default="", max_length=1500)
-    reduce: Optional[Reduce] = None
+    trim: Optional[Trim] = None
     consolidate: Optional[Consolidate] = None
     pad: Optional[Pad] = None
 

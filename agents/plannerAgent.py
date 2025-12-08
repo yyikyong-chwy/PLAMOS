@@ -9,14 +9,14 @@ from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
 from states.ContainerPlanMetrics import ContainerPlanMetrics
 from states.containerPlanState import PlanStrategy
-from states.plannerMoveProposal import OneMoveProposal, Reduce, Consolidate, Pad
+from states.plannerMoveProposal import OneMoveProposal, Trim, Consolidate, Pad
 
 FULL_THRESHOLD = 0.95
 ALMOST_FULL_MIN = 0.70
 VERY_LOW_UTIL = 0.20
 TEMP = 0
 
-ActionType = Literal["reduce", "consolidate", "pad"]
+ActionType = Literal["trim", "consolidate", "pad"]
 
 def apply_prompt_rules(vendor: vendorState):
 
@@ -24,7 +24,7 @@ def apply_prompt_rules(vendor: vendorState):
     rule_prompt = ""
     if startegy == PlanStrategy.CONSOLIDATE_REDUCE:
         rule_prompt = f"""
-        RULES (exactly ONE move: reduce | consolidate | pad)
+        RULES (exactly ONE move: trim | consolidate | pad)
 
         Status types:
         - FULL: the container is full.
@@ -42,11 +42,11 @@ def apply_prompt_rules(vendor: vendorState):
 
         2. if ALL containers have status FULL, propose do_nothing.
 
-        3. If there are more than one container that has status PARTIAL_UTIL or LOW_UTIL, propose to consolidate them. 
+        3. If there are more than one container that has status PARTIAL_UTIL or VERY_LOW_UTIL, propose to consolidate them. 
         Propose to move as much as possible from the least utilized container to the next least utilized container. 
         If MDT is one of the containers, then propose to consolidate with other destinations.             
 
-        4. if ALL but one containers have status FULL, and that single container has status LOW_UTIL, propose REDUCE the former container to remove it.
+        4. if ALL but one containers have status FULL, and that single container has status VERY_LOW_UTIL, propose TRIM the former container to remove it.
 
         5. if ALL but one containers have status FULL, and that single container has status PARTIAL_UTIL, propose do_nothing.
         
@@ -61,7 +61,7 @@ def apply_prompt_rules(vendor: vendorState):
         Status types:
         - FULL: the container is full.
         - NOT_QUITE_FULL: the container is not quite full, but close to full.
-        - LOW_UTIL: the container is low utilized.
+        - VERY_LOW_UTIL: the container is low utilized.
         - PARTIAL_UTIL: the container is partially utilized, but not low utilized.
 
         Move types:
@@ -73,7 +73,7 @@ def apply_prompt_rules(vendor: vendorState):
 
         2. if ALL containers have status FULL, propose do_nothing.
 
-        3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
+        3. If there are more than one container that is PARTIAL_UTIL or VERY_LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
             c) if MDT is one of the containers, then propose to consolidate with other destinations.
@@ -102,7 +102,7 @@ def apply_prompt_rules(vendor: vendorState):
 
         2. if ALL containers have status FULL, propose do_nothing.
 
-        3. If there are more than one container that is PARTIAL_UTIL or LOW_UTIL, 
+        3. If there are more than one container that is PARTIAL_UTIL or VERY_LOW_UTIL, 
             a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
             b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
 
@@ -140,9 +140,9 @@ def apply_prompt_rules(vendor: vendorState):
 
         Return JSON ONLY:
         {{
-        "action": "reduce" | "consolidate" | "pad" | "do_nothing",
+        "action": "trim" | "consolidate" | "pad" | "do_nothing",
         "rationale": "string",
-        "reduce": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null,
+        "trim": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null,
         "consolidate": {{"from_dest": "", "from_container": 0, "to_dest": "", "to_container": 0, }} | null,
         "pad": {{"dest": "", "container": 0, "cbm_goal": 0.0}} | null,
         "do_nothing": null
@@ -220,7 +220,7 @@ def build_planner_prompt(vendor: vendorState, metrics: ContainerPlanMetrics) -> 
 
 def plannerAgent(vendor: vendorState) -> OneMoveProposal:
     if not vendor.container_plans:
-        return OneMoveProposal(action="reduce", rationale="No plan available", reduce=Reduce(cbm_goal=0.0))
+        return OneMoveProposal(action="trim", rationale="No plan available", trim=Trim(cbm_goal=0.0))
 
     plan: ContainerPlanState = vendor.container_plans[-1]
     #df = plan.to_df()
@@ -274,5 +274,7 @@ def planner_move_router(vendor: vendorState) -> str:
     
     if action == "pad":
         return "planMovePadExecutorAgent"
+    elif action == "trim":
+        return "planMoveTrimExecutorAgent"
     else:
         return "planMoveExecutorAgent"

@@ -17,6 +17,7 @@ from agents.containerPlanPrepAgent import containerPlanPrepAgent
 from agents.planMoveExecutorAgent import planMoveExecutorAgent
 from agents.planMoveCritiqueAgent import planMoveCritiqueAgent, planMoveCritiqueAgent_router
 from agents.planMovePadExecutorAgent import planMovePadExecutorAgent
+from agents.planMoveTrimExecutorAgent import planMoveTrimExecutorAgent
 
 #states
 from states.vendorState import vendorState
@@ -45,6 +46,7 @@ def build_graph() -> StateGraph:
     graph.add_node("planMoveCritiqueAgent", planMoveCritiqueAgent)
     graph.add_node("planMoveExecutorAgent", planMoveExecutorAgent)
     graph.add_node("planMovePadExecutorAgent", planMovePadExecutorAgent)
+    graph.add_node("planMoveTrimExecutorAgent", planMoveTrimExecutorAgent)
     
     graph.add_edge(START, "basePlanAgent")
     graph.add_edge("basePlanAgent", "planEvalAgent")
@@ -56,6 +58,7 @@ def build_graph() -> StateGraph:
         planner_move_router,
         {
             "planMovePadExecutorAgent": "planMovePadExecutorAgent",
+            "planMoveTrimExecutorAgent": "planMoveTrimExecutorAgent",
             "planMoveExecutorAgent": "planMoveExecutorAgent",
         },
     )
@@ -72,6 +75,7 @@ def build_graph() -> StateGraph:
 
     graph.add_edge("planMoveExecutorAgent", "planEvalAgent") #evaluate the plan after the move
     graph.add_edge("planMovePadExecutorAgent", "planEvalAgent") #evaluate the plan after the move
+    graph.add_edge("planMoveTrimExecutorAgent", "planEvalAgent") #evaluate the plan after the move
 
     graph.add_conditional_edges(
         "planEvalAgent",
