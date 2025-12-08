@@ -8,7 +8,7 @@ from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
 from states.ContainerRow import ContainerPlanRow
 from states.ChewySkuState import ChewySkuState
-from agents.planMovePadExecutorAgent import calculate_revised_projections
+from agents.planEvalAgent import calculate_revised_projections
 
 
 # ---------------------------- helpers ---------------------------- #

@@ -10,8 +10,76 @@ import numpy as np
 #                   master_case_pack, case_pk_CBM, cases_needed, cases_assigned, cbm_assigned
 from states.ContainerRow import ContainerPlanRow  # :contentReference[oaicite:5]{index=5}
 from states.vendorState import vendorState                 # :contentReference[oaicite:7]{index=7}
-from states.containerPlanState import ContainerPlanMetrics
+from states.containerPlanState import ContainerPlanState, ContainerPlanMetrics
 from states.planStrategy import PlanStrategy, _STRATEGY_ORDER
+from states.ChewySkuState import ChewySkuState
+
+# ---------------------------- shared projection helper ---------------------------- #
+
+def calculate_revised_projections(
+    plan: ContainerPlanState,
+    sku_states: List[ChewySkuState],
+) -> pd.DataFrame:
+    """
+    Calculate revised projected inventory based on current plan assignments.
+    
+    Returns a DataFrame with:
+    - product_part_number
+    - additional_supply_eaches (from current plan)
+    - revised_projected_OH_end_LT
+    - revised_projected_OH_end_LT_plus4w
+    - revised_DOS_end_LT_days
+    - revised_DOS_end_LT_days_plus4w
+    - F90_DAILY_AVG
+    - PRODUCT_MARGIN_PER_UNIT
+    - case_pk_CBM
+    - MCP
+    """
+    # Aggregate supply by SKU from current plan (cases_assigned * master_case_pack)
+    supply_by_sku: Dict[str, int] = {}
+    for row in plan.container_plan_rows:
+        if row.cases_assigned is None or row.cases_assigned == 0:
+            continue
+        ppn = row.product_part_number
+        eaches = row.cases_assigned * row.master_case_pack
+        supply_by_sku[ppn] = supply_by_sku.get(ppn, 0) + eaches
+    
+    records = []
+    for sku in sku_states:
+        ppn = sku.product_part_number
+        additional_eaches = supply_by_sku.get(ppn, 0)
+        
+        # Original projections
+        original_oh_end_lt = sku.projected_OH_end_LT or 0.0
+        original_oh_end_lt_plus4w = sku.projected_OH_end_LT_plus4w or 0.0
+        
+        # Revised projections = original + additional supply
+        revised_oh_end_lt = original_oh_end_lt + additional_eaches
+        revised_oh_end_lt_plus4w = original_oh_end_lt_plus4w + additional_eaches
+        
+        # Calculate revised DOS
+        daily_avg = sku.F90_DAILY_AVG or sku.T90_DAILY_AVG or 0.0
+        revised_dos_end_lt = revised_oh_end_lt / daily_avg if daily_avg > 0 else None
+        revised_dos_end_lt_plus4w = revised_oh_end_lt_plus4w / daily_avg if daily_avg > 0 else None
+        
+        records.append({
+            "product_part_number": ppn,
+            "additional_supply_eaches": additional_eaches,
+            "original_projected_OH_end_LT": original_oh_end_lt,
+            "revised_projected_OH_end_LT": revised_oh_end_lt,
+            "original_projected_OH_end_LT_plus4w": original_oh_end_lt_plus4w,
+            "revised_projected_OH_end_LT_plus4w": revised_oh_end_lt_plus4w,
+            "revised_DOS_end_LT_days": revised_dos_end_lt,
+            "revised_DOS_end_LT_days_plus4w": revised_dos_end_lt_plus4w,
+            "F90_DAILY_AVG": daily_avg,
+            "PRODUCT_MARGIN_PER_UNIT": sku.PRODUCT_MARGIN_PER_UNIT or 0.0,
+            "case_pk_CBM": sku.case_pk_CBM or 0.0,
+            "MCP": sku.MCP or 0,
+            "CHW_OTB": sku.CHW_OTB,
+        })
+    
+    return pd.DataFrame(records)
+
 
 FULL_THRESHOLD = 0.95
 ALMOST_FULL_MIN = 0.70

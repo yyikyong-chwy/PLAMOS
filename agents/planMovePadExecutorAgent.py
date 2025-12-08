@@ -8,6 +8,7 @@ from states.vendorState import vendorState
 from states.containerPlanState import ContainerPlanState
 from states.ContainerRow import ContainerPlanRow
 from states.ChewySkuState import ChewySkuState
+from agents.planEvalAgent import calculate_revised_projections
 
 
 # ---------------------------- helpers ---------------------------- #
@@ -34,71 +35,6 @@ def _dest_for_container(plan: ContainerPlanState, container_id: int) -> Optional
 
 def _cbm_in_container(plan: ContainerPlanState, container_id: int) -> float:
     return sum((r.cbm_assigned or 0.0) for r in plan.container_plan_rows if r.container == container_id)
-
-
-def calculate_revised_projections(
-    plan: ContainerPlanState,
-    sku_states: List[ChewySkuState],
-) -> pd.DataFrame:
-    """
-    Calculate revised projected inventory based on current plan assignments.
-    
-    Returns a DataFrame with:
-    - product_part_number
-    - additional_supply_eaches (from current plan)
-    - revised_projected_OH_end_LT
-    - revised_projected_OH_end_LT_plus4w
-    - revised_DOS_end_LT_days
-    - revised_DOS_end_LT_days_plus4w
-    - F90_DAILY_AVG
-    - PRODUCT_MARGIN_PER_UNIT
-    - case_pk_CBM
-    - MCP
-    """
-    # Aggregate supply by SKU from current plan (cases_assigned * master_case_pack)
-    supply_by_sku: Dict[str, int] = {}
-    for row in plan.container_plan_rows:
-        if row.cases_assigned is None or row.cases_assigned == 0:
-            continue
-        ppn = row.product_part_number
-        eaches = row.cases_assigned * row.master_case_pack
-        supply_by_sku[ppn] = supply_by_sku.get(ppn, 0) + eaches
-    
-    records = []
-    for sku in sku_states:
-        ppn = sku.product_part_number
-        additional_eaches = supply_by_sku.get(ppn, 0)
-        
-        # Original projections
-        original_oh_end_lt = sku.projected_OH_end_LT or 0.0
-        original_oh_end_lt_plus4w = sku.projected_OH_end_LT_plus4w or 0.0
-        
-        # Revised projections = original + additional supply
-        revised_oh_end_lt = original_oh_end_lt + additional_eaches
-        revised_oh_end_lt_plus4w = original_oh_end_lt_plus4w + additional_eaches
-        
-        # Calculate revised DOS
-        daily_avg = sku.F90_DAILY_AVG or sku.T90_DAILY_AVG or 0.0
-        revised_dos_end_lt = revised_oh_end_lt / daily_avg if daily_avg > 0 else None
-        revised_dos_end_lt_plus4w = revised_oh_end_lt_plus4w / daily_avg if daily_avg > 0 else None
-        
-        records.append({
-            "product_part_number": ppn,
-            "additional_supply_eaches": additional_eaches,
-            "original_projected_OH_end_LT": original_oh_end_lt,
-            "revised_projected_OH_end_LT": revised_oh_end_lt,
-            "original_projected_OH_end_LT_plus4w": original_oh_end_lt_plus4w,
-            "revised_projected_OH_end_LT_plus4w": revised_oh_end_lt_plus4w,
-            "revised_DOS_end_LT_days": revised_dos_end_lt,
-            "revised_DOS_end_LT_days_plus4w": revised_dos_end_lt_plus4w,
-            "F90_DAILY_AVG": daily_avg,
-            "PRODUCT_MARGIN_PER_UNIT": sku.PRODUCT_MARGIN_PER_UNIT or 0.0,
-            "case_pk_CBM": sku.case_pk_CBM or 0.0,
-            "MCP": sku.MCP or 0,
-            "CHW_OTB": sku.CHW_OTB,
-        })
-    
-    return pd.DataFrame(records)
 
 
 def identify_promising_pad_skus(

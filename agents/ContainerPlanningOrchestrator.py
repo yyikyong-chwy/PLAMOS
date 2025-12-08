@@ -122,7 +122,8 @@ def run_workflow(LOAD_FROM_SQL_LITE: bool = False):
         print("number of containers: ", current_vendor_state.container_plans[0].metrics.containers)
         print("\n\n")
 
-        vendor_state_store.save_vendor_state_blob(".", current_vendor_state)
+        #vendor_state_store.save_vendor_state_blob(".", current_vendor_state)
+        vendor_state_store.save_vendor_state_to_db(current_vendor_state)
 
 
 if __name__ == "__main__":
