@@ -28,9 +28,10 @@ def calculate_revised_projections(
     - additional_supply_eaches (from current plan)
     - revised_projected_OH_end_LT
     - revised_projected_OH_end_LT_plus4w
-    - revised_DOS_end_LT_days
-    - revised_DOS_end_LT_days_plus4w
-    - F90_DAILY_AVG
+    - revised_DOS_end_LT_days (using runrate_at_LT)
+    - revised_DOS_end_LT_days_plus4w (using runrate_at_LT_plus4w)
+    - runrate_at_LT
+    - runrate_at_LT_plus4w
     - PRODUCT_MARGIN_PER_UNIT
     - case_pk_CBM
     - MCP
@@ -57,10 +58,11 @@ def calculate_revised_projections(
         revised_oh_end_lt = original_oh_end_lt + additional_eaches
         revised_oh_end_lt_plus4w = original_oh_end_lt_plus4w + additional_eaches
         
-        # Calculate revised DOS
-        daily_avg = sku.F90_DAILY_AVG or sku.T90_DAILY_AVG or 0.0
-        revised_dos_end_lt = revised_oh_end_lt / daily_avg if daily_avg > 0 else None
-        revised_dos_end_lt_plus4w = revised_oh_end_lt_plus4w / daily_avg if daily_avg > 0 else None
+        # Calculate revised DOS using runrate at respective time points
+        runrate_lt = sku.runrate_at_LT or 0.0
+        runrate_lt_plus4w = sku.runrate_at_LT_plus4w or 0.0
+        revised_dos_end_lt = revised_oh_end_lt / runrate_lt if runrate_lt > 0 else None
+        revised_dos_end_lt_plus4w = revised_oh_end_lt_plus4w / runrate_lt_plus4w if runrate_lt_plus4w > 0 else None
         
         records.append({
             "product_part_number": ppn,
@@ -71,7 +73,8 @@ def calculate_revised_projections(
             "revised_projected_OH_end_LT_plus4w": revised_oh_end_lt_plus4w,
             "revised_DOS_end_LT_days": revised_dos_end_lt,
             "revised_DOS_end_LT_days_plus4w": revised_dos_end_lt_plus4w,
-            "F90_DAILY_AVG": daily_avg,
+            "runrate_at_LT": runrate_lt,
+            "runrate_at_LT_plus4w": runrate_lt_plus4w,
             "PRODUCT_MARGIN_PER_UNIT": sku.PRODUCT_MARGIN_PER_UNIT or 0.0,
             "case_pk_CBM": sku.case_pk_CBM or 0.0,
             "MCP": sku.MCP or 0,

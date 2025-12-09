@@ -40,5 +40,7 @@ class ChewySkuState(BaseModel):
     DOS_end_LT_days: Optional[float] = None
     projected_OH_end_LT_plus4w: Optional[float] = None
     DOS_end_LT_plus4w_days: Optional[float] = None
-    DW_FCST: Optional[float] = None
     PRODUCT_MARGIN_PER_UNIT: Optional[float] = None
+    product_abc_code: Optional[str] = None
+    runrate_at_LT: Optional[float] = None
+    runrate_at_LT_plus4w: Optional[float] = None

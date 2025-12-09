@@ -55,9 +55,10 @@ def df_to_chewy_sku_states(
        'CHW_MASTER_CARTON_CBM', 'SKU', 'PRODUCT_NAME', 'OH', 'T90_DAILY_AVG',
        'F90_DAILY_AVG', 'F180_DAILY_AVG', 'AVG_LT', 'OO', 'T90_DOS_OH',
        'F90_DOS_OH', 'F90_DOS_OO', 'F180_DOS_OH', 'F180_DOS_OO',
-       'demand_within_LT', 'projected_OH_end_LT', 'avg_4wk_runrate',
-       'DOS_end_LT_days', 'projected_OH_end_LT_plus4w',
-       'DOS_end_LT_plus4w_days', 'DW_FCST', 'PRODUCT_MARGIN_PER_UNIT']
+       'PRODUCT_ABC_CODE', 'consumption_within_LT',
+       'consumption_within_LT_plus4w', 'projected_OH_end_LT', 'runrate_at_LT',
+       'DOS_end_LT_days', 'projected_OH_end_LT_plus4w', 'runrate_at_LT_plus4w',
+       'DOS_end_LT_plus4w_days', 'PRODUCT_MARGIN_PER_UNIT']
 
     """
     dfx = df_sku_data.copy()
@@ -102,14 +103,18 @@ def df_to_chewy_sku_states(
             F180_DOS_OH=_to_float(r.get("F180_DOS_OH")),
             F180_DOS_OO=_to_float(r.get("F180_DOS_OO")),
 
+            # classification
+            product_abc_code=_to_str(r.get("PRODUCT_ABC_CODE")),
+
             # computed/projection fields
-            demand_within_LT=_to_float(r.get("demand_within_LT")),
+            demand_within_LT=_to_float(r.get("consumption_within_LT")),
             projected_OH_end_LT=_to_float(r.get("projected_OH_end_LT")),
-            avg_4wk_runrate=_to_float(r.get("avg_4wk_runrate")),
+            avg_4wk_runrate=_to_float(r.get("runrate_at_LT")),
+            runrate_at_LT=_to_float(r.get("runrate_at_LT")),
+            runrate_at_LT_plus4w=_to_float(r.get("runrate_at_LT_plus4w")),
             DOS_end_LT_days=_to_float(r.get("DOS_end_LT_days")),
             projected_OH_end_LT_plus4w=_to_float(r.get("projected_OH_end_LT_plus4w")),
             DOS_end_LT_plus4w_days=_to_float(r.get("DOS_end_LT_plus4w_days")),
-            DW_FCST=_to_float(r.get("DW_FCST")),
             PRODUCT_MARGIN_PER_UNIT=_to_float(r.get("PRODUCT_MARGIN_PER_UNIT")),
         )
         out.append(cs)

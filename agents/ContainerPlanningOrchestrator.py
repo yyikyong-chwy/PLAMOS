@@ -92,16 +92,15 @@ def build_graph() -> StateGraph:
 #basically a wrapper for the main function workflow
 def run_workflow(LOAD_FROM_SQL_LITE: bool = False):
     
-    #df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest = load_data()    
-    #vendor_state_list = generate_vendor_states(df_sku_data, df_CBM_Max, df_kepplerSplits, demand_by_Dest)    
     vendor_state_list = data_preprocessing.run_preprocessing(LOAD_FROM_SQL_LITE) #set to false if need to load entirely from snowflake
+    vendor_state_store.drop_vendor_state_table()
 
     #iterate through the vendor_state_list and print the vendor_Code and vendor_name
     for current_vendor_state in vendor_state_list:
         print(current_vendor_state.vendor_Code, current_vendor_state.vendor_name)
 
         if current_vendor_state.vendor_Code != "B3755":
-            continue
+             continue
 
         config = {"configurable": {"thread_id": "test_session"},
          "recursion_limit": 500,  }
@@ -126,7 +125,7 @@ def run_workflow(LOAD_FROM_SQL_LITE: bool = False):
         vendor_state_store.save_vendor_state_to_db(current_vendor_state)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
     run_workflow(LOAD_FROM_SQL_LITE= True)
 
     

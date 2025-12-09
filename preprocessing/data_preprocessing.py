@@ -62,38 +62,41 @@ def enrich_sku_data_with_projection(
     Enrich df_sku_data with daily-forecast–driven LT projections.
 
     Added Columns:
-      - DW_FCST: total forecast across all available future days
-      - demand_within_LT: demand within LT (actual days, not weekly-rounded)
-      - projected_OH_end_LT: OH + OO - demand_within_LT
-      - avg_4wk_runrate: 28-day backward-looking average runrate before LT end
-      - DOS_end_LT_days: projected_OH_end_LT / avg_4wk_runrate
-
+      - consumption_within_LT: consumption within LT (actual days)
+      - consumption_within_LT_plus4w: consumption within LT + 4 weeks
+      - projected_OH_end_LT: OH + OO - consumption_within_LT
+      - runrate_at_LT: 28-day backward-looking average runrate before LT end
+      - DOS_end_LT_days: projected_OH_end_LT / runrate_at_LT
       - projected_OH_end_LT_plus4w: inventory at end of LT + 28 days
-      - DOS_end_LT_plus4w_days: projected_OH_end_LT_plus4w / avg_4wk_runrate
-    """
+      - runrate_at_LT_plus4w: 28-day backward-looking average runrate before LT+4w end
+      - DOS_end_LT_plus4w_days: projected_OH_end_LT_plus4w / runrate_at_LT_plus4w
 
-    # Copy inputs
+    All columns from df_sku_data are preserved.
+    """
     df_supply = df_sku_data.copy()
     df_fcst = df_fcst.copy()
 
-    # Normalize column names to uppercase internally
+    # Normalize column names to uppercase
     df_supply.columns = [c.upper() for c in df_supply.columns]
     df_fcst.columns = [c.upper() for c in df_fcst.columns]
 
-    # Required columns
-    for col in ["SKU", "OH", "AVG_LT", "OO"]:
+    # Validate required columns
+    required_supply = ["CHW_SKU_NUMBER", "OH", "AVG_LT", "OO"]
+    required_fcst = ["SKU", "FORECAST_DATE", "DW_FCST"]
+    
+    for col in required_supply:
         if col not in df_supply.columns:
             raise KeyError(f"Missing required supply column: {col}")
-
-    for col in ["SKU", "FORECAST_DATE", "DW_FCST"]:
+    for col in required_fcst:
         if col not in df_fcst.columns:
             raise KeyError(f"Missing required forecast column: {col}")
 
-    # Convert types
+    # Convert types for supply data
     df_supply["OH"] = pd.to_numeric(df_supply["OH"], errors="coerce").fillna(0)
     df_supply["OO"] = pd.to_numeric(df_supply["OO"], errors="coerce").fillna(0)
     df_supply["AVG_LT"] = pd.to_numeric(df_supply["AVG_LT"], errors="coerce").fillna(0)
 
+    # Convert types for forecast data
     df_fcst["FORECAST_DATE"] = pd.to_datetime(df_fcst["FORECAST_DATE"])
     df_fcst["DW_FCST"] = pd.to_numeric(df_fcst["DW_FCST"], errors="coerce").fillna(0)
 
@@ -101,92 +104,87 @@ def enrich_sku_data_with_projection(
     if today is None:
         today = pd.Timestamp("today").normalize()
 
-    # Compute day offsets
-    df_fcst = df_fcst.sort_values(["SKU", "FORECAST_DATE"])
-    df_fcst["DAY_OFFSET"] = (df_fcst["FORECAST_DATE"] - today).dt.days
-    df_fcst = df_fcst[df_fcst["DAY_OFFSET"] >= 0]   # Keep today and future
+    # Trim forecast to today onwards and sort by SKU/date
+    df_fcst = df_fcst[df_fcst["FORECAST_DATE"] >= today].copy()
+    df_fcst = df_fcst.sort_values(["SKU", "FORECAST_DATE"]).reset_index(drop=True)
 
-    # Group forecasts by SKU
-    grouped_fcst = df_fcst.groupby("SKU")
+    # Build lookup: SKU -> list of daily forecasts (ordered by date from today)
+    fcst_by_sku = {
+        sku: grp["DW_FCST"].tolist()
+        for sku, grp in df_fcst.groupby("SKU")
+    }
 
-    # Precompute total FCST across full available horizon
-    df_total_fcst = (
-        df_fcst.groupby("SKU")["DW_FCST"]
-        .sum()
-        .rename("DW_FCST")
-        .reset_index()
-    )
+    # Pre-allocate result arrays
+    n_rows = len(df_supply)
+    results = {
+        "consumption_within_LT": np.zeros(n_rows),
+        "consumption_within_LT_plus4w": np.zeros(n_rows),
+        "projected_OH_end_LT": np.zeros(n_rows),
+        "runrate_at_LT": np.full(n_rows, np.nan),
+        "DOS_end_LT_days": np.full(n_rows, np.nan),
+        "projected_OH_end_LT_plus4w": np.zeros(n_rows),
+        "runrate_at_LT_plus4w": np.full(n_rows, np.nan),
+        "DOS_end_LT_plus4w_days": np.full(n_rows, np.nan),
+    }
 
-    # Output arrays
-    demand_LT = []
-    proj_OH_LT = []
-    avg_runrate_4w = []
-    dos_LT = []
-    proj_OH_LT_plus4w = []
-    dos_LT_plus4w = []
-
-    for _, row in df_supply.iterrows():
-        sku = str(row["SKU"])
-        oh = row["OH"]
-        oo = row["OO"]
-        lt_days = max(0, math.ceil(row["AVG_LT"]))  # LT in real days
-
-        # LT + 4 weeks
+    for i, row in enumerate(df_supply.itertuples(index=False)):
+        sku = str(row.CHW_SKU_NUMBER)
+        oh = row.OH
+        oo = row.OO
+        lt_days = max(0, math.ceil(row.AVG_LT))
         lt_plus4w = lt_days + 28
 
-        # Build time-series for this SKU
-        if sku in grouped_fcst.groups:
-            sub = grouped_fcst.get_group(sku).set_index("DAY_OFFSET")["DW_FCST"]
-        else:
-            sub = pd.Series(dtype=float)
+        # Get forecast list for this SKU (empty if not found)
+        fcst_list = fcst_by_sku.get(sku, [])
 
-        # Ensure TS covers LT + 4w horizon
-        max_needed = max(lt_plus4w - 1, 0)
-        ts = sub.reindex(range(0, max_needed + 1), fill_value=0.0)
+        # Pad with zeros if forecast is shorter than needed horizon
+        max_needed = lt_plus4w
+        if len(fcst_list) < max_needed:
+            fcst_list = fcst_list + [0.0] * (max_needed - len(fcst_list))
 
-        # Demand during LT
-        d_LT = ts.loc[0:lt_days - 1].sum() if lt_days > 0 else 0.0
+        # Consumption within LT (days 0 to lt_days-1)
+        c_LT = sum(fcst_list[:lt_days]) if lt_days > 0 else 0.0
 
-        # Demand during LT + 4w
-        d_LT_plus4 = ts.loc[0:lt_plus4w - 1].sum() if lt_plus4w > 0 else 0.0
+        # Consumption within LT + 4w (days 0 to lt_plus4w-1)
+        c_LT_plus4w = sum(fcst_list[:lt_plus4w]) if lt_plus4w > 0 else 0.0
 
-        # Projected OH at end of LT
-        oh_LT = oh + oo - d_LT
+        # Projected OH at end of LT and LT+4w
+        oh_LT = oh + oo - c_LT
+        oh_LT_plus4w = oh + oo - c_LT_plus4w
 
-        # Projected OH at end of LT + 4w
-        oh_LT_plus4 = oh + oo - d_LT_plus4
-
-        # Backward 4-week runrate before LT end
+        # Backward 28-day runrate ending at LT
         if lt_days > 0:
-            w_end = lt_days - 1
-            w_start = max(0, w_end - 27)
-            window = ts.loc[w_start:w_end]
-            runrate_4w = window.mean() if len(window) > 0 else np.nan
+            w_start = max(0, lt_days - 28)
+            window = fcst_list[w_start:lt_days]
+            runrate_LT = np.mean(window) if window else np.nan
         else:
-            runrate_4w = np.nan
+            runrate_LT = np.nan
 
-        # DOS at LT and LT+4w
-        dos_val = oh_LT / runrate_4w if runrate_4w and runrate_4w > 0 else np.nan
-        dos_val_plus4 = oh_LT_plus4 / runrate_4w if runrate_4w and runrate_4w > 0 else np.nan
+        # Backward 28-day runrate ending at LT+4w
+        if lt_plus4w > 0:
+            w_start_plus4w = max(0, lt_plus4w - 28)
+            window_plus4w = fcst_list[w_start_plus4w:lt_plus4w]
+            runrate_LT_plus4w = np.mean(window_plus4w) if window_plus4w else np.nan
+        else:
+            runrate_LT_plus4w = np.nan
 
-        # Append
-        demand_LT.append(d_LT)
-        proj_OH_LT.append(oh_LT)
-        avg_runrate_4w.append(runrate_4w)
-        dos_LT.append(dos_val)
-        proj_OH_LT_plus4w.append(oh_LT_plus4)
-        dos_LT_plus4w.append(dos_val_plus4)
+        # DOS calculations
+        dos_LT = oh_LT / runrate_LT if runrate_LT and runrate_LT > 0 else np.nan
+        dos_LT_plus4w = oh_LT_plus4w / runrate_LT_plus4w if runrate_LT_plus4w and runrate_LT_plus4w > 0 else np.nan
 
-    # Assign new columns
-    df_supply["demand_within_LT"] = demand_LT
-    df_supply["projected_OH_end_LT"] = proj_OH_LT
-    df_supply["avg_4wk_runrate"] = avg_runrate_4w
-    df_supply["DOS_end_LT_days"] = dos_LT
-    df_supply["projected_OH_end_LT_plus4w"] = proj_OH_LT_plus4w
-    df_supply["DOS_end_LT_plus4w_days"] = dos_LT_plus4w
+        # Store results
+        results["consumption_within_LT"][i] = c_LT
+        results["consumption_within_LT_plus4w"][i] = c_LT_plus4w
+        results["projected_OH_end_LT"][i] = oh_LT
+        results["runrate_at_LT"][i] = runrate_LT
+        results["DOS_end_LT_days"][i] = dos_LT
+        results["projected_OH_end_LT_plus4w"][i] = oh_LT_plus4w
+        results["runrate_at_LT_plus4w"][i] = runrate_LT_plus4w
+        results["DOS_end_LT_plus4w_days"][i] = dos_LT_plus4w
 
-    # Add DW_FCST total
-    df_supply = df_supply.merge(df_total_fcst, on="SKU", how="left")
+    # Assign all new columns at once
+    for col_name, values in results.items():
+        df_supply[col_name] = values
 
     return df_supply
 
@@ -241,7 +239,8 @@ def process_demand_data(LOAD_FROM_SQL_LITE: bool = False) -> pd.DataFrame:
     keep_cols_2 = [
     'SKU','PRODUCT_NAME', 'OH',
     'T90_DAILY_AVG', 'F90_DAILY_AVG', 'F180_DAILY_AVG', 'AVG_LT', 'OO',
-    'T90_DOS_OH', 'F90_DOS_OH', 'F90_DOS_OO', 'F180_DOS_OH', 'F180_DOS_OO']
+    'T90_DOS_OH', 'F90_DOS_OH', 'F90_DOS_OO', 'F180_DOS_OH', 'F180_DOS_OO',
+    'PRODUCT_ABC_CODE']
     
     df_skuSupplySnapshot = df_skuSupplySnapshot[keep_cols_2].copy()
 
@@ -308,7 +307,7 @@ def process_demand_data(LOAD_FROM_SQL_LITE: bool = False) -> pd.DataFrame:
 
     #take out bunch of irrelevant skus
     df_sku_data = df_sku_data[
-        (df_sku_data[["OO","OH","PLANNED_DEMAND","demand_within_LT","projected_OH_end_LT","avg_4wk_runrate"]] != 0).any(axis=1)]
+        (df_sku_data[["OO","OH","PLANNED_DEMAND","consumption_within_LT","projected_OH_end_LT","runrate_at_LT"]] != 0).any(axis=1)]
     df_sku_data = df_sku_data[df_sku_data["CHW_PRIMARY_SUPPLIER_NAME"].notna()]
 
     #taking out suppliers that have no demand

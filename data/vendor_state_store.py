@@ -372,3 +372,27 @@ def list_vendor_codes_in_db() -> List[str]:
     except Exception as e:
         print(f"[list_vendor_codes_in_db] Error: {e}")
         return []
+
+
+def drop_vendor_state_table() -> dict:
+    """
+    Drop the entire vendor_states table from the database.
+    
+    WARNING: This permanently deletes the table and all its data.
+    
+    Returns:
+        dict with keys: 'success', 'message' or 'error'
+    """
+    try:
+        with _db_connect() as conn:
+            conn.execute(f"DROP TABLE IF EXISTS {VENDOR_STATE_TABLE}")
+            conn.commit()
+        return {
+            "success": True,
+            "message": f"Table '{VENDOR_STATE_TABLE}' dropped successfully.",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }

@@ -22,7 +22,7 @@ def apply_prompt_rules(vendor: vendorState):
 
     startegy = vendor.container_plans[-1].strategy
     rule_prompt = ""
-    if startegy == PlanStrategy.CONSOLIDATE_REDUCE:
+    if startegy == PlanStrategy.CONSOLIDATE_PAD_TRIM:
         rule_prompt = f"""
         RULES (exactly ONE move: trim | consolidate | pad)
 
@@ -108,6 +108,34 @@ def apply_prompt_rules(vendor: vendorState):
 
         4. If all containers are FULL and **only** one container is not status FULL:
             a) Propose PAD to reach ~{int(FULL_THRESHOLD*100)}%.
+
+        5. if none of rule 1 to 4 applies, propose do_nothing.
+        """
+    elif startegy == PlanStrategy.CONSOLIDATE_REDUCE:
+        rule_prompt += f"""
+        RULES (exactly ONE move:  consolidate | trim | do_nothing)
+
+        Status types:
+        - FULL: the container is full.
+        - NOT_QUITE_FULL: the container is not quite full, but close to full.
+        - LOW_UTIL: the container is low utilized.
+        - PARTIAL_UTIL: the container is partially utilized, but not low utilized.
+
+        Move types:
+        - consolidate: move all or portion (cbm_move) from a partial container into another partial one.
+        - trim: remove CBM goal from a specific container.
+
+        Decision:
+        1. Never propose anything on a container that has status FULL.
+
+        2. if ALL containers have status FULL, propose do_nothing.
+
+        3. If there are more than one container that is PARTIAL_UTIL or VERY_LOW_UTIL, 
+            a) starting with the least utilized container, propose move as much as possible from the least utilized container to the next least utilized container 
+            b) if the combined CBM is less than CBM_Max, propose to move all CBM from the least utilized container to the next least utilized container
+
+        4. If all containers are FULL and **only** one container is not status FULL:
+            a) Propose TRIM to remove the container that is not status FULL.
 
         5. if none of rule 1 to 4 applies, propose do_nothing.
         """
